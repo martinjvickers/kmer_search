@@ -1,2 +1,17 @@
 # kmer_search
-Given a fastq/fasta file, return kmer counts from KMC3 database
+
+### Compiling
+
+Getting this to compile on my machine;
+
+```
+git submodule update --init --recursive
+cd KMC
+make -j8
+cd ../
+make
+```
+
+### Running
+
+
