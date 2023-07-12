@@ -1,0 +1,6 @@
+[submodule "KMC"]
+	path = KMC
+	url = https://github.com/refresh-bio/KMC
+[submodule "seqan"]
+	path = seqan
+	url = https://github.com/seqan/seqan
