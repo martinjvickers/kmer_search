@@ -14,4 +14,6 @@ make
 
 ### Running
 
-
+```
+./kmer_search -f examples/test_dna.fq -k examples/3mer
+```
