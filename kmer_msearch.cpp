@@ -24,6 +24,8 @@
 #include "KMC/kmc_api/kmc_file.h"
 #include <cmath>
 #include <bitset>
+#include <functional>
+#include <pthread.h>
 
 
 using namespace seqan2;
@@ -37,6 +39,7 @@ struct ModifyStringOptions {
   CharString kmer;
   CharString seqFile;
   vector<CharString> databases;
+  int threads;
 };
 
 seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & options, 
@@ -54,6 +57,10 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
 				   ArgParseArgument::STRING, "TEXT", true));
   setRequired(parser, "databases");
 */
+
+  addOption(parser, ArgParseOption("t", "threads", "Number of threads",
+                                   ArgParseArgument::INTEGER, "INT"));
+  setDefaultValue(parser, "threads", "1");
 
   setShortDescription(parser, "kmer_msearch");
   setVersion(parser, "0.0.1");
@@ -78,7 +85,135 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   return ArgumentParser::PARSE_OK;
 }
 
-int encode(CharString &kmer, bitset<16> &kmer2)
+class CountMinSketch {
+private:
+    std::vector<std::vector<uint64_t>> sketch;
+    std::vector<uint64_t> hash_coefficients;
+    size_t d; // Depth (number of rows)
+    size_t w; // Width (number of counters per row)
+
+public:
+    CountMinSketch(size_t depth, size_t width)
+        : d(depth), w(width), sketch(depth, std::vector<uint64_t>(width, 0)) {
+        // Initialize the hash coefficients
+        std::hash<uint64_t> hash_func;
+        for (size_t i = 0; i < d; ++i) {
+            uint64_t coefficient = hash_func(i); // Use different hash coefficients for each row
+            hash_coefficients.push_back(coefficient);
+        }
+    }
+
+    // Increment the count for the given value
+    void increment(uint64_t value) {
+        for (size_t i = 0; i < d; ++i) {
+            // Compute the hash index for the current row
+            uint64_t hash_index = (hash_coefficients[i] ^ value) % w;
+            sketch[i][hash_index]++;
+        }
+    }
+
+    // Estimate the count for the given value
+    uint64_t estimate(uint64_t value) const {
+        uint64_t min_count = UINT64_MAX;
+        for (size_t i = 0; i < d; ++i) {
+            // Compute the hash index for the current row
+            uint64_t hash_index = (hash_coefficients[i] ^ value) % w;
+            min_count = std::min(min_count, sketch[i][hash_index]);
+        }
+        return min_count;
+    }
+};
+
+/*
+class CountMinSketch {
+private:
+    std::vector<std::vector<uint64_t>> sketch;
+    std::vector<uint64_t> hash_coefficients;
+    size_t d; // Depth (number of rows)
+    size_t w; // Width (number of counters per row)
+    size_t num_threads; // Number of threads to use for parallelization
+
+    // Helper struct to pass data to threads
+    struct ThreadData {
+        CountMinSketch* cms;
+        uint64_t value;
+        size_t thread_id;
+    };
+
+    // Helper function to increment a subset of rows
+    static void* incrementSubset(void* arg) {
+        ThreadData* data = static_cast<ThreadData*>(arg);
+        size_t rows_per_thread = data->cms->d / data->cms->num_threads;
+        size_t remaining_rows = data->cms->d % data->cms->num_threads;
+        size_t start_row = data->thread_id * rows_per_thread;
+        size_t end_row = start_row + rows_per_thread + (data->thread_id == data->cms->num_threads - 1 ? remaining_rows : 0);
+
+        for (size_t i = start_row; i < end_row; ++i) {
+            uint64_t hash_index = (data->cms->hash_coefficients[i] ^ data->value) % data->cms->w;
+            data->cms->sketch[i][hash_index]++;
+	    cout << i << "\t" << hash_index << "\t" << data->cms->sketch[i][hash_index] << endl;
+        }
+
+        return nullptr;
+    }
+
+public:
+    CountMinSketch(size_t depth, size_t width, size_t num_threads)
+        : d(depth), w(width), num_threads(num_threads),
+          sketch(depth, std::vector<uint64_t>(width, 0)) {
+        // Initialize the hash coefficients
+        std::hash<uint64_t> hash_func;
+        for (size_t i = 0; i < d; ++i) {
+            uint64_t coefficient = hash_func(i); // Use different hash coefficients for each row
+            hash_coefficients.push_back(coefficient);
+        }
+    }
+
+    // Increment the count for the given value (parallelized version)
+    void increment(uint64_t value) {
+        std::vector<pthread_t> threads(num_threads);
+        std::vector<ThreadData> thread_data(num_threads);
+
+        cout << num_threads << endl;
+
+        // Launch threads
+        for (size_t i = 0; i < num_threads; ++i) {
+            thread_data[i] = {this, value, i};
+	    cout << value << "\t" << i << "\t" << num_threads << endl;
+            pthread_create(&threads[i], nullptr, incrementSubset, &thread_data[i]);
+        }
+
+        // Wait for threads to finish
+        for (size_t i = 0; i < num_threads; ++i) {
+            pthread_join(threads[i], nullptr);
+        }
+    }
+
+    // Estimate the count for the given value
+    uint64_t estimate(uint64_t value) const {
+      uint64_t min_count = UINT64_MAX;
+      for (size_t i = 0; i < d; ++i) {
+        // Compute the hash index for the current row
+        uint64_t hash_index = (hash_coefficients[i] ^ value) % w;
+        min_count = std::min(min_count, sketch[i][hash_index]);
+      }
+      return min_count;
+    }
+
+    void printSketch(){
+      for(size_t i = 0; i < d; ++i) 
+      {
+        for(size_t j = 0; j < w; ++j)
+	{
+          cout << sketch[i][j] << "\t";		
+        }
+	cout << endl;
+      }	       
+    }
+};
+*/
+
+int encode(CharString &kmer, bitset<62> &kmer2)
 {
   for(int i=0; i < length(kmer); i++)
   { 
@@ -140,143 +275,51 @@ int main(int argc, char const ** argv)
   int read_count = 0;
   long gb = 1024 * 1024 * 1024;
 
-  // let's have some 8-mer arrays, four of them to deal with 31-mers
-  int* arrayA = (int*)malloc(pow(2, 8) * sizeof(int));
-  memset(arrayA, 0, pow(2, 8) * sizeof(int));
-  int* arrayB = (int*)malloc(pow(2, 8) * sizeof(int));
-  memset(arrayB, 0, pow(2, 8) * sizeof(int));
-  int* arrayC = (int*)malloc(pow(2, 8) * sizeof(int));
-  memset(arrayC, 0, pow(2, 8) * sizeof(int));
-  int* arrayD = (int*)malloc(pow(2, 8) * sizeof(int));
-  memset(arrayD, 0, pow(2, 8) * sizeof(int));
-
-  //cout << (pow(2, (_kmer_length*2)) * sizeof(int)) / gb << " ram in GB" << endl;
-  //cout << (ipow(2, (_kmer_length*2)) * sizeof(int)) / gb << " ram in GB" << endl;
-
-  //cout << "allocating " << pow(2, _kmer_length) << endl;
-  //int* array = (int*)malloc(pow(2, _kmer_length) * sizeof(int));
-  //memset(array, 0, pow(2, _kmer_length) * sizeof(int));
-  //cout << "array " << sizeof(array)/sizeof(array[0]) << endl; 
- 
-/*  
-  unsigned long long int combinations = ipow(2, (_kmer_length*2));
-  unsigned short int* array;
-  cout << "number of elements " << combinations << endl;
-  cout << combinations * sizeof(unsigned short int) /gb << " GB" << endl;
-  cout << "bool size in bytes " << sizeof(unsigned short int) << endl;
-
-  try {
-    array = new unsigned short int[combinations];
-    memset(array, 0, combinations * sizeof(unsigned short int));
-    cout << "Successfully allocated memory" << endl;
-    //cout << "combinations=" << combinations << "\tcombinations-1=" << array[combinations-1] << endl;
-  }
-  catch(const bad_alloc& e) {
-    cout << "alloc failed : " << e.what() << endl;
-    return 1;    
-  }	  
-  cout << "allocated" << endl;
-  */
-
-/*
-  for(unsigned long long int i = 0; i < combinations; i++)
-  {
-    cout << i << "\t" << array[i] << endl;	  
-  }	  
-*/
+  //CountMinSketch cms(1000, 1024, options.threads);
+  CountMinSketch cms(1000, 1024);
 
   while (!atEnd(seqFileIn))
   {
-    CharString id;
+    CharString id, inf;
     Dna5String seq;
     readRecord(id, seq, seqFileIn);
+
     //cout << seq << endl;
-    CharString inf;
 
     for(int i = 0; i < length(seq)-_kmer_length+1; i++)
     {
-      inf = infix(seq, i, i+7);
-      std::bitset<16> kmer2;
+      inf = infix(seq, i, i+_kmer_length);
+      std::bitset<62> kmer;
+      encode(inf, kmer);
+      //cout << kmer.to_ullong() << endl;           
 
-      if(encode(inf, kmer2) == 0)
-      {
-        cout << kmer2.to_ulong() << endl;	      
-	arrayA[kmer2.to_ulong()]++;	
-      }
-
-      inf = infix(seq, i+8, i+16);
-      if(encode(inf, kmer2) == 0)
-      { 
-	 cout << kmer2.to_ulong() << endl;     
-         arrayB[kmer2.to_ulong()]++;
-      }
-     
+      cms.increment((uint64_t)kmer.to_ullong());
+      //cout << inf << "\t" << kmer.to_ulong() << endl;
+      //cout << hash_value(kmer) << endl;
     }
-    read_count++;
   }
 
-  cout << "completed " << read_count << " reads." << endl;
+  //cms.printSketch();
 
-/*  
-  for(auto d : options.databases)
-  {	  
+  close(seqFileIn);
 
-    KMC::Runner runner;
-    CKMCFile kmer_database;
+  SeqFileIn seqFileIn2(toCString(options.seqFile));
 
-    if(!kmer_database.OpenForRA(toCString(d)))
+  while (!atEnd(seqFileIn2))
+  {
+    CharString id, inf;
+    Dna5String seq;
+    readRecord(id, seq, seqFileIn2);
+
+    for(int i = 0; i < length(seq)-_kmer_length+1; i++)
     {
-      cout <<"Error opening kmer database file." << endl;
-    }
-
-    uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
-    uint64 _max_count;
-    uint64 _total_kmers;
-
-    kmer_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
-
-    SeqFileIn seqFileIn(toCString(options.seqFile));
-
-    while (!atEnd(seqFileIn))
-    {
-      CharString id;
-      Dna5String seq;
-      readRecord(id, seq, seqFileIn);
-      CharString inf;
-
-      for(int i = 0; i < length(seq)-_kmer_length+1; i++)
-      {
-         inf = infix(seq, i, i+_kmer_length);
-
-         uint64 counter;
-
-         CKmerAPI kmer_object(_kmer_length);
-         std::string tofind = toCString(inf);
-         kmer_object.from_string(tofind);
-
-         if(kmer_database.CheckKmer(kmer_object, counter))
-         {
-           cout << kmer_object.to_string() << "\t" << counter << endl;
-         }
-         else
-         {
-           kmer_object.reverse();
-           if(kmer_database.CheckKmer(kmer_object, counter))
-           {
-             cout << kmer_object.to_string() << "\t" << counter << endl;
-           }
-         }
-      }
-    }
-    kmer_database.Close();
+      inf = infix(seq, i, i+_kmer_length);
+      std::bitset<62> kmer;
+      encode(inf, kmer);
+      cout << inf << "\t" << kmer.to_ullong() << "\t" << cms.estimate((uint64_t)kmer.to_ullong()) << endl;
+    }    
   }
-*/
-//  delete [] array;
-//
-  delete [] arrayA;
-  delete [] arrayB;
-  delete [] arrayC;
-  delete [] arrayD;
+  close(seqFileIn2);
   return 0;
 
 }
