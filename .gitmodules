@@ -4,3 +4,6 @@
 [submodule "seqan"]
 	path = seqan
 	url = https://github.com/seqan/seqan
+[submodule "murmer"]
+	path = murmer
+	url = git@github.com:martinjvickers/murmer.git
