@@ -4,15 +4,15 @@ LIB = -Wl,--whole-archive -lpthread -lgmp -lgmpxx -lz -lm -llzma -lbz2 -lrt -Wl,
 INC = -I./seqan/include
 LD =  KMC/bin/libkmc_core.a 
 
-all : KMC/bin/libkmc_core.a kmer_search kmer_pa_matrix kmer_msearch kmer_pa_matrix_new
+all : KMC/bin/libkmc_core.a kmer_search kmer_pa_matrix kmer_pa_matrix_new
 
 kmer_search : kmer_search.cpp
 		$(CC) -O3 $^ $(LD) $(INC) $(LIB) -o $@
 kmer_pa_matrix : kmer_pa_matrix.cpp
 		$(CC) -O3 $^ $(LD) $(INC) $(LIB) -o $@
-kmer_msearch : kmer_msearch.cpp MurmurHash3.h  MurmurHash3.cpp
-		$(CC) -O3 $^ $(LD) $(INC) $(LIB) -o $@
+#kmer_msearch : kmer_msearch.cpp MurmurHash3.h  MurmurHash3.cpp
+#		$(CC) -O3 $^ $(LD) $(INC) $(LIB) -o $@
 kmer_pa_matrix_new : kmer_pa_matrix_new.cpp
 		$(CC) -O3 $^ $(LD) $(INC) $(LIB) -o $@
 clean:
-		rm kmer_search kmer_msearch kmer_ps_matrix kmer_pa_matrix_new
+		rm kmer_search kmer_msearch kmer_pa_matrix kmer_pa_matrix_new
