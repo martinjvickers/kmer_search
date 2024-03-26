@@ -22,12 +22,23 @@
 #include "KMC/kmc_api/kmc_file.h"
 #include <cmath>
 #include <boost/dynamic_bitset.hpp>
+#include <gmpxx.h>
+#include <chrono>
+#include <boost/interprocess/managed_mapped_file.hpp>
+#include <boost/interprocess/containers/vector.hpp>
+#include <boost/interprocess/allocators/allocator.hpp>
 
 using namespace seqan2;
 using namespace std;
+using namespace std::chrono;
 
 typedef std::pair<CharString, int> location;
 typedef std::size_t position_t;
+
+namespace bip = boost::interprocess;
+
+typedef bip::allocator<unsigned long long, bip::managed_mapped_file::segment_manager> ShmemAllocator;
+typedef bip::vector<unsigned long long, ShmemAllocator> MyVector;
 
 struct ModifyStringOptions {
   vector<CharString> kmerDatabases;
@@ -64,117 +75,187 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   return ArgumentParser::PARSE_OK;
 }
 
-int encode(CharString &kmer, boost::dynamic_bitset<> &kmer2)
+int encodeGMP(CharString &kmer, mpz_class &x_mpz)
 {
-	for(int i = 0; i < length(kmer); i++)
+    for (size_t i = 0; i < length(kmer); ++i) {
+	if(kmer[i] == 'A')
 	{
-	/*
-	 * I don't know why switches aren't working, i will deal with this later
-	 * switch(kmer[i])
-		{
-		  case 'A':
-		    cout << "A\t";
-		    kmer2[2*i] = false;
-                    kmer2[(2*i)+1] = false;
-		  case 'G':
-		    cout << "G\t";
-                    kmer2[2*i] = false;
-                    kmer2[(2*i)+1] = true;
-                  case 'C':
-		    cout << "C\t";
-	            kmer2[2*i] = true;
-                    kmer2[(2*i)+1] = false;
-                  case 'T':
-		    cout << "T\t";
-                    kmer2[2*i] = true;
-                    kmer2[(2*i)+1] = true;
-                }
-        }
-	*/
-		if(kmer[i] == 'A')
-		{
-			kmer2[2*i] = false;
-                        kmer2[(2*i)+1] = false;
-		}
-		else if(kmer[i] == 'G')
-		{
-                    kmer2[2*i] = false;
-                    kmer2[(2*i)+1] = true;		    
-		}
-		else if(kmer[i] == 'C')
-		{
-                    kmer2[2*i] = true;
-                    kmer2[(2*i)+1] = false;		    
-		}
-		else if(kmer[i] == 'T')
-		{
-                    kmer2[2*i] = true;
-                    kmer2[(2*i)+1] = true;		    
-		}
-		else
-		{
-			return 1;
-		}
-
+		mpz_clrbit(x_mpz.get_mpz_t(), 2*i); // false
+		mpz_clrbit(x_mpz.get_mpz_t(), (2*i)+1); // false		
 	}
-        return 0;
+	else if(kmer[i] == 'G')
+	{
+		mpz_clrbit(x_mpz.get_mpz_t(), 2*i); // false
+		mpz_setbit(x_mpz.get_mpz_t(), (2*i)+1); // true
+	}
+	else if(kmer[i] == 'C')
+	{
+		mpz_setbit(x_mpz.get_mpz_t(), 2*i); // true
+		mpz_clrbit(x_mpz.get_mpz_t(), (2*i)+1); // false			
+	}
+	else if(kmer[i] == 'T')
+	{
+		mpz_setbit(x_mpz.get_mpz_t(), 2*i); // true
+		mpz_setbit(x_mpz.get_mpz_t(), (2*i)+1); // true			    
+	}
+	else
+	{
+		return 1;
+	}
+    }
+    return 0;
 }
+
+int encode(const std::string& kmer, unsigned long long int& x_ull) 
+{
+	x_ull = 0;
+	for (size_t i = 0; i < kmer.length(); ++i) 
+	{
+		char nucleotide = kmer[i];
+		switch (nucleotide) 
+		{
+			case 'A':
+				// No need to change bits, as both bits are 0 by default in an unsigned long long int
+				break;
+			case 'G':
+				x_ull |= (1ULL << (2*i + 1));
+				break;
+			case 'C':
+				x_ull |= (1ULL << (2*i));
+				break;
+			case 'T':
+				x_ull |= (1ULL << (2*i));
+				x_ull |= (1ULL << (2*i + 1));
+				break;
+			default:
+				return 1; // Return an error code if an invalid character is encountered
+		}
+	}
+	return 0;
+}
+
+int readFile(const char* filename)
+{
+	//Read numbers from the binary file and check if they match the originals
+	FILE* file = fopen(filename, "rb"); // Open file in binary read mode
+	if (file == nullptr) 
+	{
+		std::cerr << "Error opening file for reading." << std::endl;
+		return 1;
+	}
+
+	mpz_t number;
+	mpz_init(number);
+
+	while (!feof(file))
+	{
+		size_t bytes_read = mpz_inp_raw(number, file);
+		if (bytes_read == 0) 
+		{
+			if (feof(file))
+			{
+				// end of file reached
+				break;
+			}
+			else
+			{
+				cerr << "ERROR reading from file." << endl;
+				fclose(file);
+				mpz_clear(number);
+				return 1;
+			}
+		}	
+		//gmp_printf("Read number: %Zd\n", number);
+	}
+	fclose(file);
+	mpz_clear(number);
+	return 0;
+}
+
+
 
 // A basic template to get up and running quickly
 int main(int argc, char const ** argv)
 {
-  //parse our options
-  ModifyStringOptions options;
-  ArgumentParser::ParseResult res = parseCommandLine(options,argc, argv);
-  if(res != ArgumentParser::PARSE_OK){
-    return res == ArgumentParser::PARSE_ERROR;
-  }
+	//parse our options
+	ModifyStringOptions options;
+	ArgumentParser::ParseResult res = parseCommandLine(options,argc, argv);
+	if(res != ArgumentParser::PARSE_OK){
+		return res == ArgumentParser::PARSE_ERROR;
+	}
 
-  // ideally, this loop would be scaled across multiple threads/machines
-  for(auto i : options.kmerDatabases)
-  {	  
-  	KMC::Runner runner;
-  	CKMCFile kmer_database;
+	// ideally, this loop would be scaled across multiple threads/machines
+	for(auto i : options.kmerDatabases)
+	{	
+		cout << "Reading kmer db " << i << endl;
+  		KMC::Runner runner;
+  		CKMCFile kmer_database;
 
-  	if(!kmer_database.OpenForListing(toCString(i)))
-  	{
-  		cout <<"Error opening kmer database file." << endl;
-  	} 
+		auto start = high_resolution_clock::now();
 
-	// read existing kmer database, which gives us our kmer length
-  	uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
-  	uint64 _max_count;
-  	uint64 _total_kmers;
+		bip::managed_mapped_file file(bip::open_or_create, "shared_memory.bin", 10); // Adjust size as needed
+		// Construct the allocator
+		ShmemAllocator alloc(file.get_segment_manager());
+		// Construct the vector in shared memory
+		MyVector *vec = file.find_or_construct<MyVector>("Vector")(alloc);
 
-  	kmer_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
+  		if(!kmer_database.OpenForListing(toCString(i)))
+  		{
+  			cout <<"Error opening kmer database file." << endl;
+  		} 
 
-  	CKmerAPI kmer_object(_kmer_length);
-  	uint32 counter;
+		// read existing kmer database, which gives us our kmer length
+  		uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
+  		uint64 _max_count;
+  		uint64 _total_kmers;
 
-        int limit = 10;
-        int c = 0;
+  		kmer_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
 
-	std::map<std::vector<bool>, bool> store_kmers;
+  		CKmerAPI kmer_object(_kmer_length);
+  		uint32 counter;
 
-	// each kmer
-  	while(kmer_database.ReadNextKmer(kmer_object, counter))
-  	{
-		string str;
+        	int limit = 10;
+        	int c = 0;
 
-		if(counter > 2 && counter < 15)
-		{	
-			kmer_object.to_string(str);
+		// each kmer
+  		while(kmer_database.ReadNextKmer(kmer_object, counter))
+  		{
+			string str;
 
-			CharString kmer = str;
-			boost::dynamic_bitset<> x(_kmer_length*2);
-			if(encode(kmer, x) == 1)
-			{
-				cout << "Encoding of " << kmer << " failed" << endl;
+			if(counter >= 5 && counter <= 15)
+			{	
+				kmer_object.to_string(str);
+				unsigned long long int encoded;
+				encode(str, encoded);
+				//kmers.push_back(encoded);
+				vec->push_back(encoded);
+				cout << "encoded\t" << encoded << endl; 
 			}
+	  	}
+
+		for(const auto& n : *vec)
+		{
+			cout << "unsorted\t" << n << endl;
 		}
-  	}		  
-	kmer_database.Close();
-  }	
-  return 0;
+
+		kmer_database.Close();
+		auto stop = high_resolution_clock::now();
+		auto duration = duration_cast<microseconds>(stop - start);
+		cout << "File read: " << duration.count() << endl;
+
+		// sort our vector
+		start = high_resolution_clock::now();
+		std::sort(vec->begin(), vec->end());
+		stop = high_resolution_clock::now();
+		duration = duration_cast<microseconds>(stop - start);
+		cout << "Sorted : " << duration.count() << endl;
+
+		for(const auto& n : *vec)
+		{
+			cout << "done_sorted\t" << n << endl;
+		}
+	}	
+
+	return 0;
 
 }
