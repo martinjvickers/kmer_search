@@ -6,4 +6,4 @@
 	url = https://github.com/seqan/seqan
 [submodule "murmer"]
 	path = murmer
-	url = git@github.com:martinjvickers/murmer.git
+	url = https://github.com/martinjvickers/murmer.git
