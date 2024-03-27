@@ -199,6 +199,8 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	uint32 counter;
 
 	cerr << "Master database consists of " << _total_kmers << " " << _kmer_length << "-mers"<< endl;
+	v.resize(_total_kmers);
+	uint64 c = 0;
 
 	while(kmer_database.ReadNextKmer(kmer_object, counter))
 	{
@@ -206,12 +208,14 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 		kmer_object.to_string(str);
 		unsigned long long int encoded;
 		encode(str, encoded);
-		kmer kmerToAdd;
-		kmerToAdd.k = encoded;
-		unsigned short zeroed = 0;
-		kmerToAdd.bits = zeroed;
-		v.push_back(kmerToAdd);
-
+		//kmer kmerToAdd;
+		//kmerToAdd.k = encoded;
+		//unsigned short zeroed = 0;
+		//kmerToAdd.bits = zeroed;
+		//v.push_back(kmerToAdd);
+		v[c].k = encoded;
+		v[c].bits = 0;
+		c++;
 	}
 
 	kmer_database.Close();
