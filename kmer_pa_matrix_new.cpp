@@ -11,9 +11,11 @@
 #include <seqan/arg_parse.h>
 #include "KMC/include/kmc_runner.h"
 #include "KMC/kmc_api/kmc_file.h"
+#include <chrono>
 
 using namespace seqan2;
 using namespace std;
+using namespace std::chrono;
 
 struct ModifyStringOptions 
 {
@@ -179,6 +181,7 @@ vector<CharString> createFileList(CharString kmerDatabaseList)
 
 int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &kmer_length)
 {
+	auto start = high_resolution_clock::now();
 	KMC::Runner runner;
 	CKMCFile kmer_database;
 	if(!kmer_database.OpenForListing(toCString(masterKmers)))
@@ -195,6 +198,8 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	CKmerAPI kmer_object(_kmer_length);
 	uint32 counter;
 
+	cerr << "Master database consists of " << _total_kmers << " " << _kmer_length << "-mers"<< endl;
+
 	while(kmer_database.ReadNextKmer(kmer_object, counter))
 	{
 		string str;
@@ -210,6 +215,10 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	}
 
 	kmer_database.Close();
+
+	auto stop = high_resolution_clock::now();
+	auto duration = duration_cast<seconds>(stop - start);
+	cerr << "Master kmer database processed: " << duration.count() << " seconds" << endl;
 
 	return 0;
 }
@@ -232,11 +241,18 @@ int main(int argc, char const ** argv)
 	uint32 kmer_length;
 	createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length);
 
+	cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
+
 	int counter = 0;
 	for(auto i : kmer_dbs)
 	{
 		cout << i << "\t";
+		cerr << "Processing " << i << " " << (counter+1) << "/"<< length(kmer_dbs) << endl;
+		auto start = high_resolution_clock::now();
 		checkForPA(options.masterKmerDatabase, i, pa_matrix, counter);
+		auto stop = high_resolution_clock::now();
+	        auto duration = duration_cast<seconds>(stop - start);
+        	cerr << "Completed in : " << duration.count() << " seconds" << endl;		
 		counter++;
 	}
 	cout << endl;
