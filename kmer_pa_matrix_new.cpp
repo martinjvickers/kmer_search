@@ -12,6 +12,7 @@
 #include "KMC/include/kmc_runner.h"
 #include "KMC/kmc_api/kmc_file.h"
 #include <chrono>
+#include <boost/dynamic_bitset.hpp>
 
 using namespace seqan2;
 using namespace std;
@@ -26,7 +27,8 @@ struct ModifyStringOptions
 struct kmer
 {
 	uint64 k;
-	unsigned short bits;
+	uint64 bits;
+	boost::dynamic_bitset<> x;
 };
 
 seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & options, 
@@ -147,53 +149,6 @@ int checkForPA(CharString currentDBtoCheck, vector<kmer> &v, int n)
         return 0;	
 }
 
-int checkForPA(CharString masterKmerDB, CharString currentDBtoCheck, vector<kmer> &v, int n)
-{
-	// open master kmer file in dump mode
-	// open kmer db we are checking in random mode
-	// loop through master in order, checking to see if it exists
-	// flip the bit
-	KMC::Runner runner;
-	CKMCFile kmer_master_database;
-	if(!kmer_master_database.OpenForListing(toCString(masterKmerDB)))
-	{
-		cout <<"Error opening kmer database file " << masterKmerDB<< endl;
-		return 1;
-	}
-	uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
-	uint64 _max_count, _total_kmers, counter;
-	kmer_master_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
-	CKmerAPI kmer_object(_kmer_length);
-
-	// this is the query database for random access searching
-	CKMCFile kmer_query_database;
-	if(!kmer_query_database.OpenForRA(toCString(currentDBtoCheck)))
-	{
-		cout <<"Error opening kmer database file " << currentDBtoCheck << endl;
-		return 1;
-	}
-	uint32 _kmer_query_length, _query_mode, _query_counter_size, _query_lut_prefix_length, _query_sig_len, _query_min_count;
-	uint64 _query_max_count, _query_total_kmers;
-	kmer_query_database.Info(_kmer_query_length, _query_mode, _query_counter_size, _query_lut_prefix_length, _query_sig_len, _query_min_count, _query_max_count, _query_total_kmers);
-	CKmerAPI query_kmer_object(_kmer_query_length);
-
-	int c = 0;
-
-	// loop through each kmer
-	while(kmer_master_database.ReadNextKmer(kmer_object, counter))
-	{
-		if(kmer_query_database.IsKmer(kmer_object) == 1)
-		{
-			v[c].bits ^= (static_cast<uint64_t>(1) << n);
-		}
-		c++;
-	}
-
-	kmer_master_database.Close();
-	kmer_query_database.Close();
-	return 0;
-}
-
 vector<CharString> createFileList(CharString kmerDatabaseList)
 {
 	vector<CharString> v;
@@ -232,6 +187,8 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	cerr << "Master database consists of " << _total_kmers << " " << _kmer_length << "-mers"<< endl;
 	v.resize(_total_kmers);
 	uint64 c = 0;
+	boost::dynamic_bitset<> x(n);
+	
 
 	while(kmer_database.ReadNextKmer(kmer_object, counter))
 	{
@@ -239,13 +196,9 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 		kmer_object.to_string(str);
 		unsigned long long int encoded;
 		encode(str, encoded);
-		//kmer kmerToAdd;
-		//kmerToAdd.k = encoded;
-		//unsigned short zeroed = 0;
-		//kmerToAdd.bits = zeroed;
-		//v.push_back(kmerToAdd);
 		v[c].k = encoded;
 		v[c].bits = 0;
+		v[c].x = x;
 		c++;
 	}
 
@@ -284,7 +237,6 @@ int main(int argc, char const ** argv)
 		cout << i << "\t";
 		cerr << "Processing " << i << " " << (counter+1) << "/"<< length(kmer_dbs) << endl;
 		auto start = high_resolution_clock::now();
-		//checkForPA(options.masterKmerDatabase, i, pa_matrix, counter);
 		checkForPA(i, pa_matrix, counter);
 		auto stop = high_resolution_clock::now();
 	        auto duration = duration_cast<seconds>(stop - start);
