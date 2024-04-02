@@ -179,8 +179,16 @@ vector<CharString> createFileList(CharString kmerDatabaseList)
 	return v;
 }
 
-int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &kmer_length)
+int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &kmer_length, CharString outputFilename)
 {
+        // write out
+	std::ofstream outfile(toCString(outputFilename), std::ios::binary);
+	if (!outfile.is_open())
+	{
+		std::cerr << "Failed to open file: " << outputFilename << std::endl;
+		return 1;
+	}
+	
 	auto start = high_resolution_clock::now();
 	KMC::Runner runner;
 	CKMCFile kmer_database;
@@ -198,14 +206,8 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	CKmerAPI kmer_object(_kmer_length);
 	uint32 counter;
 
-	cerr << "Master database consists of " << _total_kmers << " " << _kmer_length << "-mers"<< endl;
 	v.resize(_total_kmers);
-	uint64 c = 0;
-	vector<bool> x(n, false);
-	size_t bytes_used = x.size() / 8 + (x.size() % 8 != 0);
-	cout << "bytes used to represent a kmer: " << bytes_used << endl;
-	size_t totalram = ((bytes_used+8)*_total_kmers) / (1024 * 1024 * 1024);
-	cout << "estimated RAM " << totalram << " GB" << endl;
+	uint64 c; // counter
 
 	vector<uint64> bits;
 	size_t numUint64 = (n + 63) / 64;
@@ -213,6 +215,7 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 	{
 		uint64 b = 0;
 		bits.push_back(b);
+
 	}
 
 	while(kmer_database.ReadNextKmer(kmer_object, counter))
@@ -221,12 +224,18 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 		kmer_object.to_string(str);
 		unsigned long long int encoded;
 		encode(str, encoded);
-		v[c].k = encoded;
-		v[c].bits = bits;
+		//v[c].k = encoded;
+		//v[c].bits = bits;
+		outfile.write(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
+		for (auto bit : bits)
+		{
+			outfile.write(reinterpret_cast<const char*>(&bit), sizeof(bit));
+		}
 		c++;
 	}
 
 	kmer_database.Close();
+	outfile.close();
 
 	auto stop = high_resolution_clock::now();
 	auto duration = duration_cast<seconds>(stop - start);
@@ -301,10 +310,12 @@ int main(int argc, char const ** argv)
 	// create output array from master kmerdb
 	vector<kmer> pa_matrix;
 	uint32 kmer_length;
-	createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length);
+
+
+	createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length, options.outputFilename);
 
 	cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
-
+/*
 	int counter = 0;
 	for(auto i : kmer_dbs)
 	{
@@ -321,11 +332,11 @@ int main(int argc, char const ** argv)
 		counter++;
 	}
 	cout << endl;
+*/
 
+	//writeOutPA(pa_matrix, options.outputFilename);
 
-	writeOutPA(pa_matrix, options.outputFilename);
-
-	//readInPA(pa_matrix, options.outputFilename, kmer_dbs);
+	readInPA(pa_matrix, options.outputFilename, kmer_dbs);
 
 	return 0;
 
