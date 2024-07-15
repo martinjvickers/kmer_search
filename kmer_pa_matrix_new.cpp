@@ -13,6 +13,12 @@
 #include "KMC/kmc_api/kmc_file.h"
 #include <chrono>
 #include <boost/dynamic_bitset.hpp>
+#include <fstream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string>
 
 using namespace seqan2;
 using namespace std;
@@ -24,6 +30,7 @@ struct ModifyStringOptions
 	CharString masterKmerDatabase;
 	int specific_kmer;
 	CharString outputFilename;
+	bool createPAfile;
 };
 
 struct kmer
@@ -50,7 +57,8 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   addOption(parser, ArgParseOption("o", "output-file",
 			           "This is the PA matrix output file",
 				   ArgParseArgument::STRING, "TEXT", true));
-  
+  addOption(parser, ArgParseOption("pa", "create-pa",
+			           "This creates the PA matrix file, a blank one ready for first use."));
 
   setShortDescription(parser, "kmer_pa_matrix");
   setVersion(parser, "0.0.1");
@@ -68,6 +76,7 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   getOptionValue(options.masterKmerDatabase, parser, "master-database");
   getOptionValue(options.specific_kmer, parser, "specific-kmer");
   getOptionValue(options.outputFilename, parser, "output-file");
+  options.createPAfile = isSet(parser, "create-pa");
 
   return ArgumentParser::PARSE_OK;
 }
@@ -128,39 +137,133 @@ int decode(const unsigned long long int& x_ull, std::string& kmer, uint32 kmer_l
 	return 0;
 }
 
-int checkForPA(CharString currentDBtoCheck, vector<kmer> &v, int n)
+int getListOfKmers(CharString masterDatabase, vector<uint64> &v)
 {
-	// this is the query database for random access searching
-	CKMCFile kmer_query_database;
-	if(!kmer_query_database.OpenForRA(toCString(currentDBtoCheck)))
+	KMC::Runner runner;
+	CKMCFile kmer_database;
+	if(!kmer_database.OpenForListing(toCString(masterDatabase)))
 	{
-		cout <<"Error opening kmer database file " << currentDBtoCheck << endl;
+		cout <<"Error opening kmer database file." << endl;
+		return 1;
+	}
+	// read existing kmer database, which gives us our kmer length
+	uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
+	uint64 _max_count;
+	uint64 _total_kmers;
+	kmer_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
+	CKmerAPI kmer_object(_kmer_length);
+	uint32 counter;
+	uint64 c;
+
+	v.resize(_total_kmers);
+
+	while(kmer_database.ReadNextKmer(kmer_object, counter))
+	{
+		unsigned long long int encoded;
+		string str;
+		kmer_object.to_string(str);
+		encode(str, encoded);
+		v[c] = encoded;
+	}
+	
+	return 0;
+}
+
+int checkForPA(CharString masterKmers, CharString currentKmers, CharString inputFilename, vector<CharString> kmer_dbs, int position_to_edit)
+{
+	// this vector contains the true/false of each of our master kmers found in the current kmer list
+	vector<bool> v;
+        KMC::Runner runner;
+	CKMCFile kmer_database;
+	if(!kmer_database.OpenForListing(toCString(masterKmers)))
+	{
+		cout <<"Error opening kmer database file." << endl;
+		return 1;
+	}
+	// read existing kmer database, which gives us our kmer length
+	uint32 _kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count;
+	uint64 _max_count;
+	uint64 _total_kmers;
+	kmer_database.Info(_kmer_length, _mode, _counter_size, _lut_prefix_length, _sig_len, _min_count, _max_count, _total_kmers);
+	CKmerAPI kmer_object(_kmer_length);
+
+        // this is the query database for random access searching
+	CKMCFile kmer_query_database;
+	if(!kmer_query_database.OpenForRA(toCString(currentKmers)))
+	{
+		cout <<"Error opening kmer database file " << currentKmers << endl;
 		return 1;
 	}
 	uint32 _kmer_query_length, _query_mode, _query_counter_size, _query_lut_prefix_length, _query_sig_len, _query_min_count;
 	uint64 _query_max_count, _query_total_kmers;
 	kmer_query_database.Info(_kmer_query_length, _query_mode, _query_counter_size, _query_lut_prefix_length, _query_sig_len, _query_min_count, _query_max_count, _query_total_kmers);
-	CKmerAPI kmer_object(_kmer_query_length);
+	CKmerAPI kmer_query_object(_kmer_query_length);
+	uint32 counter;
 
-	uint64 integer_to_work_on = ((n+1) + 63) / 64;
-	uint64 integer_before = integer_to_work_on-1;
-	uint64 num_bits = n - (integer_before*64);
-
-        for(uint64 c = 0; c < length(v); c++)
+	// for each master kmer, we append our kmers to the vector
+	while(kmer_database.ReadNextKmer(kmer_object, counter))
 	{
-		string k;
-		decode(v[c].k, k, _kmer_query_length);
-		kmer_object.from_string(k);
-		string meh;
-		kmer_object.to_string(meh);
+		unsigned long long int encoded;
+		string str;
+		kmer_object.to_string(str);
+		encode(str, encoded);
 		if(kmer_query_database.IsKmer(kmer_object) == 1)
 		{
-			v[c].bits[integer_to_work_on-1] ^= (static_cast<uint64_t>(1) << num_bits);
+			v.push_back(1);
+		}
+		else
+		{
+			v.push_back(0);
 		}
 	}
 
-        kmer_query_database.Close();
-        return 0;	
+	kmer_query_database.Close();
+	kmer_database.Close();
+
+	// read in file and edit it
+	std::fstream infile(toCString(inputFilename), std::ios::in | std::ios::out | std::ios::binary);
+        //if (!infile.is_open())
+	if (!infile)
+        {
+                std::cerr << "Failed to open file: " << inputFilename << std::endl;
+                return 1;
+        }		
+
+	//this calculates our vector which contains the number of bytes we need to cover our number of accessions
+	//this might not be needed. I will give it some thought
+	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
+	vector<uint64> bits;
+	for(int i = 0; i < numUint64; i++)
+	{
+		uint64 b = 0;
+		bits.push_back(b);
+	}
+	int byte_to_edit = (((position_to_edit+1) + 63) / 64)-1;
+	int bit_to_edit = position_to_edit - (byte_to_edit*64);
+
+	// remember that the first byte contains the encoded kmer
+	std::streampos position = (0+8) + (byte_to_edit * 8);
+	uint64 count = 0;
+
+	while(count < length(v))
+	{
+		if(v[count] == 1)
+		{
+			uint64 byte;
+			infile.seekg(position);
+                	infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
+		        infile.seekp(position);
+			byte = (((uint64_t)1) << bit_to_edit) | byte;
+			infile.write(reinterpret_cast<char*>(&byte), sizeof(byte));
+		}
+
+		position = (position) + ((numUint64+1)*8);
+		count++;
+	}
+
+	infile.close();
+
+	return 0;
 }
 
 vector<CharString> createFileList(CharString kmerDatabaseList)
@@ -224,8 +327,6 @@ int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &km
 		kmer_object.to_string(str);
 		unsigned long long int encoded;
 		encode(str, encoded);
-		//v[c].k = encoded;
-		//v[c].bits = bits;
 		outfile.write(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
 		for (auto bit : bits)
 		{
@@ -294,6 +395,53 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	return 0;
 }
 
+// Function to create a lock file with hostname and process ID
+bool createLockFile(CharString outputFilename)
+{
+	int fd = open(toCString(outputFilename), O_CREAT | O_EXCL | O_WRONLY, 0666);
+	if (fd == -1)
+	{
+		return false; // Failed to create lock file, likely because it already exists
+	}
+
+	char hostname[256];
+        gethostname(hostname, sizeof(hostname));
+	pid_t pid = getpid();
+
+	std::string content = "Hostname: " + std::string(hostname) + "\nProcess ID: " + std::to_string(pid) + "\n";
+	ssize_t bytesWritten = ::write(fd, content.c_str(), content.size());  // Using ::write to specify from unistd.h
+
+	if(bytesWritten == -1)
+	{
+		cout << "Error writing to file" << endl;
+		close(fd);
+		return false;
+	}
+
+	if(fsync(fd) == 1)
+	{
+		cout << "Error syncing to disk" << endl;
+		close(fd);
+		return false;
+	}
+
+	close(fd);
+	return true;
+}
+
+// Function to delete the lock file
+void deleteLockFile(CharString outputFilename)
+{
+	if (remove(toCString(outputFilename)) != 0) 
+	{
+		std::cerr << "Error deleting lock file." << std::endl;
+	}
+	else
+	{
+		std::cout << "Lock file deleted successfully." << std::endl;
+	}
+}
+
 // A basic template to get up and running quickly
 int main(int argc, char const ** argv)
 {
@@ -311,32 +459,44 @@ int main(int argc, char const ** argv)
 	vector<kmer> pa_matrix;
 	uint32 kmer_length;
 
-
-	createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length, options.outputFilename);
-
-	cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
-/*
-	int counter = 0;
-	for(auto i : kmer_dbs)
+	if(options.createPAfile == true)
 	{
-		if(counter == options.specific_kmer)
-		{
-			cout << i << "\t";
-			cerr << "Processing " << i << " " << (counter+1) << "/"<< length(kmer_dbs) << endl;
-			auto start = high_resolution_clock::now();
-			checkForPA(i, pa_matrix, counter);
-			auto stop = high_resolution_clock::now();
-		        auto duration = duration_cast<seconds>(stop - start);
-	        	cerr << "Completed in : " << duration.count() << " seconds" << endl;
-		}
-		counter++;
+		createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length, options.outputFilename);
 	}
-	cout << endl;
-*/
+	else
+	{
+		CharString lockExtension = ".lock";
+		CharString lockFilename = options.outputFilename;
+		append(lockFilename, lockExtension);
+		cout << "Lockfile " << lockFilename << endl;
+		while(true)
+		{
+			if(createLockFile(lockFilename))
+			{
+				break;
+			}
+			else
+			{
+				// i guess this could be a random number
+				cout << "File locked, waiting 60 seconds" << endl;
+				sleep(60);
+			}
+		}
 
-	//writeOutPA(pa_matrix, options.outputFilename);
+		cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
+		cout << options.specific_kmer << "\t";
+		cerr << "Processing " << options.specific_kmer << " " << (options.specific_kmer+1) << "/"<< length(kmer_dbs) << endl;
+		auto start = high_resolution_clock::now();
+		checkForPA(options.masterKmerDatabase, kmer_dbs[options.specific_kmer], options.outputFilename, kmer_dbs, options.specific_kmer);
+		auto stop = high_resolution_clock::now();
+		auto duration = duration_cast<seconds>(stop - start);
+		cerr << "Completed in : " << duration.count() << " seconds" << endl;
 
-	readInPA(pa_matrix, options.outputFilename, kmer_dbs);
+		// remove lock file
+		deleteLockFile(lockFilename);
+	}
+
+	//readInPA(pa_matrix, options.outputFilename, kmer_dbs);
 
 	return 0;
 
