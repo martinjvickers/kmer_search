@@ -137,6 +137,52 @@ int decode(const unsigned long long int& x_ull, std::string& kmer, uint32 kmer_l
 	return 0;
 }
 
+// Function to delete the lock file
+void deleteLockFile(CharString outputFilename)
+{
+	if (remove(toCString(outputFilename)) != 0)
+	{
+		std::cerr << "Error deleting lock file." << std::endl;
+	}
+	else
+	{
+		std::cout << "Lock file deleted successfully." << std::endl;
+	}
+}
+
+bool createLockFile(CharString outputFilename)
+{
+	int fd = open(toCString(outputFilename), O_CREAT | O_EXCL | O_WRONLY, 0666);
+	if (fd == -1)
+	{
+		return false; // Failed to create lock file, likely because it already exists
+	}
+
+	char hostname[256];
+	gethostname(hostname, sizeof(hostname));
+	pid_t pid = getpid();
+
+	std::string content = "Hostname: " + std::string(hostname) + "\nProcess ID: " + std::to_string(pid) + "\n";
+	ssize_t bytesWritten = ::write(fd, content.c_str(), content.size());  // Using ::write to specify from unistd.h
+
+	if(bytesWritten == -1)
+	{
+		cout << "Error writing to file" << endl;
+		close(fd);
+		return false;
+	}
+
+	if(fsync(fd) == 1)
+	{
+		cout << "Error syncing to disk" << endl;
+		close(fd);
+		return false;
+	}
+
+	close(fd);
+	return true;
+}
+
 int getListOfKmers(CharString masterDatabase, vector<uint64> &v)
 {
 	KMC::Runner runner;
@@ -220,6 +266,24 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 	kmer_query_database.Close();
 	kmer_database.Close();
 
+	CharString lockExtension = ".lock";
+	CharString lockFilename = inputFilename;
+	append(lockFilename, lockExtension);
+	cout << "Lockfile " << lockFilename << endl;
+	while(true)
+	{
+		if(createLockFile(lockFilename))
+		{
+			break;
+		}
+		else
+		{
+			// i guess this could be a random number
+			cout << "File locked, waiting 60 seconds" << endl;
+			sleep(60);
+		}
+	}
+
 	// read in file and edit it
 	std::fstream infile(toCString(inputFilename), std::ios::in | std::ios::out | std::ios::binary);
         //if (!infile.is_open())
@@ -262,6 +326,8 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 	}
 
 	infile.close();
+
+	deleteLockFile(lockFilename);
 
 	return 0;
 }
@@ -395,53 +461,6 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	return 0;
 }
 
-// Function to create a lock file with hostname and process ID
-bool createLockFile(CharString outputFilename)
-{
-	int fd = open(toCString(outputFilename), O_CREAT | O_EXCL | O_WRONLY, 0666);
-	if (fd == -1)
-	{
-		return false; // Failed to create lock file, likely because it already exists
-	}
-
-	char hostname[256];
-        gethostname(hostname, sizeof(hostname));
-	pid_t pid = getpid();
-
-	std::string content = "Hostname: " + std::string(hostname) + "\nProcess ID: " + std::to_string(pid) + "\n";
-	ssize_t bytesWritten = ::write(fd, content.c_str(), content.size());  // Using ::write to specify from unistd.h
-
-	if(bytesWritten == -1)
-	{
-		cout << "Error writing to file" << endl;
-		close(fd);
-		return false;
-	}
-
-	if(fsync(fd) == 1)
-	{
-		cout << "Error syncing to disk" << endl;
-		close(fd);
-		return false;
-	}
-
-	close(fd);
-	return true;
-}
-
-// Function to delete the lock file
-void deleteLockFile(CharString outputFilename)
-{
-	if (remove(toCString(outputFilename)) != 0) 
-	{
-		std::cerr << "Error deleting lock file." << std::endl;
-	}
-	else
-	{
-		std::cout << "Lock file deleted successfully." << std::endl;
-	}
-}
-
 // A basic template to get up and running quickly
 int main(int argc, char const ** argv)
 {
@@ -465,6 +484,7 @@ int main(int argc, char const ** argv)
 	}
 	else
 	{
+		/*
 		CharString lockExtension = ".lock";
 		CharString lockFilename = options.outputFilename;
 		append(lockFilename, lockExtension);
@@ -481,7 +501,7 @@ int main(int argc, char const ** argv)
 				cout << "File locked, waiting 60 seconds" << endl;
 				sleep(60);
 			}
-		}
+		}*/
 
 		cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
 		cout << options.specific_kmer << "\t";
@@ -493,7 +513,7 @@ int main(int argc, char const ** argv)
 		cerr << "Completed in : " << duration.count() << " seconds" << endl;
 
 		// remove lock file
-		deleteLockFile(lockFilename);
+		//deleteLockFile(lockFilename);
 	}
 
 	//readInPA(pa_matrix, options.outputFilename, kmer_dbs);
