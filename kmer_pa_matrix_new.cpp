@@ -449,8 +449,15 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	kmer matrix;
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
 
+	int count = 0;
+
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
+		if(count >= 10)
+		{
+			break;
+		}
+
 		cout << matrix.k << "\t";
 		for (size_t i = 0; i < numUint64; ++i)
 		{
@@ -459,6 +466,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			cout << bit << "\t";
 		}
 		cout << endl;
+		count++;
 	}
 	infile.close();
 	return 0;
