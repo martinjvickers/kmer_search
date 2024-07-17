@@ -266,24 +266,6 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 	kmer_query_database.Close();
 	kmer_database.Close();
 
-	CharString lockExtension = ".lock";
-	CharString lockFilename = inputFilename;
-	append(lockFilename, lockExtension);
-	cout << "Lockfile " << lockFilename << endl;
-	while(true)
-	{
-		if(createLockFile(lockFilename))
-		{
-			break;
-		}
-		else
-		{
-			// i guess this could be a random number
-			cout << "File locked, waiting 60 seconds" << endl;
-			sleep(60);
-		}
-	}
-
 	// read in file and edit it
 	std::fstream infile(toCString(inputFilename), std::ios::in | std::ios::out | std::ios::binary);
         //if (!infile.is_open())
@@ -306,54 +288,30 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 	int bit_to_edit = position_to_edit - (byte_to_edit*64);
 
 	// remember that the first byte contains the encoded kmer
-	//std::streampos start_position = (0+8) + (byte_to_edit * 8);
-	std::streampos start_position = 0;
+	std::streampos position = (0+8) + (byte_to_edit * 8);
 	uint64 count = 0; // the row we are editing
 
-	infile.seekg(0, std::ios::end);
-	std::streampos filesize = infile.tellg();
-	infile.seekg(0, std::ios::beg);
+	CharString lockExtension = ".lock.";
+	CharString lockFilename = inputFilename;
+	CharString byte_suffix = to_string(byte_to_edit);
+	append(lockFilename, lockExtension);
+	append(lockFilename, byte_suffix);
+	cout << "Lockfile " << lockFilename << endl;
 
-	// buffer size in bytes (1GB of uint64)
-	size_t buffer_size = 134217728; //must be greater than the number of bytes+1 and must be smaller than the file size
-	if((filesize/8) < buffer_size)
+	while(true)
 	{
-		buffer_size = filesize/8;
-	}
-
-	std::vector<uint64> buffer(buffer_size);
-
-	while(count < length(v))
-	{
-		std::streampos position = start_position + (count * (numUint64 + 1) * 8);
-
-		// Read a chunk into the buffer
-		infile.seekg(position);
-		infile.read(reinterpret_cast<char*>(buffer.data()), buffer.size() * sizeof(uint64));
-		std::streamsize bytesRead = infile.gcount();
-
-		for(size_t i = 1+byte_to_edit; i < buffer.size() && count < v.size(); i=i+(numUint64)+1)
+		if(createLockFile(lockFilename))
 		{
-			if (v[count] == 1)
-			{
-				//cout << "modify\t" << count << "\t" << i << "\t" << buffer[i] << "\t" << position << "\t" << bytesRead<< endl;
-				buffer[i] |= (static_cast<uint64>(1) << bit_to_edit);
-				//cout << "modify\t" << count << "\t" << i << "\t" << buffer[i] << endl;
-			}
-			count++;
-		}
-		infile.seekg(position);
-
-		//cout << "writing\tbuf_size=" << buffer.size() << " bytes=" << bytesRead << " pos=" << position << " tellg=" << infile.tellg()<< " tellp=" << infile.tellp() << " filesize=" << filesize << endl;
-		infile.write(reinterpret_cast<const char*>(&buffer[0]), bytesRead);
-
-		if (!infile) {
-			std::cerr << "Error writing to file at position " << position << " (" << strerror(errno) << ")" << std::endl;	
 			break;
 		}
+		else
+		{
+			// i guess this could be a random number
+			cout << "File locked, waiting 60 seconds" << endl;
+			sleep(60);
+		}
 	}
 
-	/*
 	while(count < length(v))
 	{
 		if(v[count] == 1)
@@ -369,7 +327,6 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 		position = (position) + ((numUint64+1)*8);
 		count++;
 	}
-	*/
 
 	infile.close();
 
@@ -540,7 +497,7 @@ int main(int argc, char const ** argv)
 		cerr << "Completed in : " << duration.count() << " seconds" << endl;
 	}
 
-	//readInPA(pa_matrix, options.outputFilename, kmer_dbs);
+	readInPA(pa_matrix, options.outputFilename, kmer_dbs);
 
 	return 0;
 
