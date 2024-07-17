@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string>
+#include <set>
 
 using namespace seqan2;
 using namespace std;
@@ -28,9 +29,10 @@ struct ModifyStringOptions
 {
 	CharString kmerDatabasesFilenames;
 	CharString masterKmerDatabase;
-	int specific_kmer;
+	int kmer_size;
 	CharString outputFilename;
 	bool createPAfile;
+	CharString kmerListFilename;
 };
 
 struct kmer
@@ -50,20 +52,26 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   addOption(parser, ArgParseOption("m", "master-database",
 			           "A master list of the union of all kmer databases",
                                    ArgParseArgument::STRING, "TEXT", true));
-  setRequired(parser, "master-database");
-  addOption(parser, ArgParseOption("n", "specific-kmer", 
-			           "If you wish to just run PA on a specific kmer database, give that number here.",
-			           ArgParseArgument::INTEGER, "INT"));
-  addOption(parser, ArgParseOption("o", "output-file",
-			           "This is the PA matrix output file",
+
+  addOption(parser, ArgParseOption("s", "kmer-size",
+	                           "At the moment we specify the kmer size, this should match the kmer size of the database",
+	                            ArgParseArgument::INTEGER, "INT"));
+  setRequired(parser, "kmer-size");
+
+  addOption(parser, ArgParseOption("i", "input-matrix-file",
+			           "This is the PA matrix file",
 				   ArgParseArgument::STRING, "TEXT", true));
-  addOption(parser, ArgParseOption("pa", "create-pa",
-			           "This creates the PA matrix file, a blank one ready for first use."));
+  setRequired(parser, "input-matrix-file");
+
+  addOption(parser, ArgParseOption("l", "list-of-kmers",
+                                   "This is a file of K-mers that we want to extract from matrix file.",
+                                   ArgParseArgument::STRING, "TEXT", true));
+  setRequired(parser, "list-of-kmers");
 
   setShortDescription(parser, "kmer_pa_matrix");
   setVersion(parser, "0.0.1");
   setDate(parser, "April 2024");
-  addUsageLine(parser, "-k kmerdb \
+  addUsageLine(parser, "-k kmerdb -i pa_matrix.bin \
                         [\\fIOPTIONS\\fP] ");
   addDescription(parser, "");
   ArgumentParser::ParseResult res = parse(parser, argc, argv);
@@ -74,9 +82,9 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
 
   getOptionValue(options.kmerDatabasesFilenames, parser, "kmer-databases");
   getOptionValue(options.masterKmerDatabase, parser, "master-database");
-  getOptionValue(options.specific_kmer, parser, "specific-kmer");
-  getOptionValue(options.outputFilename, parser, "output-file");
-  options.createPAfile = isSet(parser, "create-pa");
+  getOptionValue(options.outputFilename, parser, "input-matrix-file");
+  getOptionValue(options.kmerListFilename, parser, "list-of-kmers");
+  getOptionValue(options.kmer_size, parser, "kmer-size");
 
   return ArgumentParser::PARSE_OK;
 }
@@ -324,7 +332,7 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 			infile.write(reinterpret_cast<char*>(&byte), sizeof(byte));
 		}
 
-		position = (position) + ((numUint64+1)*8);
+		position = position + ((numUint64+1)*8);
 		count++;
 	}
 
@@ -349,6 +357,22 @@ vector<CharString> createFileList(CharString kmerDatabaseList)
 		file.close();
 	}
 	return v;
+}
+
+void createKmerFileList(CharString kmers_to_search_for, std::set<uint64> &v)
+{
+	string line;
+	ifstream file(toCString(kmers_to_search_for));
+	if (file.is_open())
+	{
+		while (getline(file, line))
+		{
+			unsigned long long int encoded;
+	                encode(line, encoded);
+			v.insert(encoded);
+		}
+		file.close();
+	}
 }
 
 int createOutputArray(CharString masterKmers, int n, vector<kmer> &v, uint32 &kmer_length, CharString outputFilename)
@@ -437,7 +461,15 @@ int writeOutPA(vector<kmer> &pa_matrix, CharString outputFilename)
 	return 0;
 }
 
-int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharString> kmer_dbs)
+uint64_t reverseBits(uint64_t n)
+{
+	bitset<64> bits(n);
+	string s = bits.to_string();
+	std::reverse(s.begin(), s.end());
+	return bitset<64>(s).to_ulong();
+}
+
+int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharString> kmer_dbs, std::set<uint64> &to_find, int kmer_size)
 {
         std::ifstream infile(toCString(inputFilename), std::ios::binary);
 	if (!infile.is_open())
@@ -449,24 +481,26 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	kmer matrix;
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
 
-	int count = 0;
-
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
-		if(count >= 10)
+		if(to_find.find(matrix.k) == to_find.end())
 		{
-			break;
+			continue;
 		}
 
-		cout << matrix.k << "\t";
+		string kmer;
+		decode(matrix.k, kmer, kmer_size); 
+		cout << kmer << "\t";
+
 		for (size_t i = 0; i < numUint64; ++i)
 		{
-			uint64 bit;
-			infile.read(reinterpret_cast<char*>(&bit), sizeof(uint64));
-			cout << bit << "\t";
+			uint64 byte;
+			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
+			uint64 rev = reverseBits(byte);
+			std::bitset<64> x(rev);
+			cout << x;
 		}
 		cout << endl;
-		count++;
 	}
 	infile.close();
 	return 0;
@@ -485,27 +519,14 @@ int main(int argc, char const ** argv)
 	// get kmer databases from file
 	vector<CharString> kmer_dbs = createFileList(options.kmerDatabasesFilenames);
 
-	// create output array from master kmerdb
+	// read in a databases of kmers
+	//aset<uint64> kmers_to_search_for = 
+	std::set<uint64> kmers_to_search_for;
+	createKmerFileList(options.kmerListFilename, kmers_to_search_for);
 	vector<kmer> pa_matrix;
-	uint32 kmer_length;
 
-	if(options.createPAfile == true)
-	{
-		createOutputArray(options.masterKmerDatabase, length(kmer_dbs), pa_matrix, kmer_length, options.outputFilename);
-	}
-	else
-	{
-		cerr << "There are " << length(kmer_dbs) << " databases to process." << endl;
-		cout << options.specific_kmer << "\t";
-		cerr << "Processing " << options.specific_kmer << " " << (options.specific_kmer+1) << "/"<< length(kmer_dbs) << endl;
-		auto start = high_resolution_clock::now();
-		checkForPA(options.masterKmerDatabase, kmer_dbs[options.specific_kmer], options.outputFilename, kmer_dbs, options.specific_kmer);
-		auto stop = high_resolution_clock::now();
-		auto duration = duration_cast<seconds>(stop - start);
-		cerr << "Completed in : " << duration.count() << " seconds" << endl;
-	}
-
-	readInPA(pa_matrix, options.outputFilename, kmer_dbs);
+	// begin cycling through the PA matrix, looking for the kmers
+	readInPA(pa_matrix, options.outputFilename, kmer_dbs, kmers_to_search_for, options.kmer_size);
 
 	return 0;
 
