@@ -505,7 +505,7 @@ int main(int argc, char const ** argv)
 		cerr << "Completed in : " << duration.count() << " seconds" << endl;
 	}
 
-	readInPA(pa_matrix, options.outputFilename, kmer_dbs);
+	//readInPA(pa_matrix, options.outputFilename, kmer_dbs);
 
 	return 0;
 
