@@ -490,7 +490,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 
 		string kmer;
 		decode(matrix.k, kmer, kmer_size); 
-		cout << kmer << "\t";
+		cout << kmer << "\t" << matrix.k << "\t";
 
 		for (size_t i = 0; i < numUint64; ++i)
 		{
