@@ -483,14 +483,12 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
-		if(to_find.find(matrix.k) == to_find.end())
-		{
-			continue;
-		}
-
 		string kmer;
 		decode(matrix.k, kmer, kmer_size); 
-		cout << kmer << "\t" << matrix.k << "\t";
+		if(to_find.find(matrix.k) != to_find.end())
+		{
+			cout << kmer << "\t" << matrix.k << "\t";
+		}
 
 		for (size_t i = 0; i < numUint64; ++i)
 		{
@@ -498,9 +496,17 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
 			uint64 rev = reverseBits(byte);
 			std::bitset<64> x(rev);
-			cout << x;
+			if(to_find.find(matrix.k) != to_find.end())
+	                {
+				cout << x;
+			}
 		}
-		cout << endl;
+
+		if(to_find.find(matrix.k) != to_find.end())
+		{
+			cout << endl;
+		}
+
 	}
 	infile.close();
 	return 0;
