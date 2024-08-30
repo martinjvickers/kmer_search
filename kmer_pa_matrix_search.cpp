@@ -480,7 +480,10 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 
 	kmer matrix;
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
+        int bits_at_the_end = 64 - ((numUint64 * 64) - length(kmer_dbs));
+	//cout << numUint64 << "\t" << bits_at_the_end << endl;
 
+	// go through each entry of the matrix
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
 		string kmer;
@@ -496,9 +499,25 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
 			uint64 rev = reverseBits(byte);
 			std::bitset<64> x(rev);
+
 			if(to_find.find(matrix.k) != to_find.end())
-	                {
-				cout << x;
+			{
+
+			//cout << i << endl;
+			if(i != (numUint64-1))
+			{
+				if(to_find.find(matrix.k) != to_find.end())
+	                	{
+					cout << x;
+				}
+			}
+			else if(i == (numUint64-1))
+			{
+				for(int j = 0; j < bits_at_the_end; j++)
+				{
+					cout << x[j];
+				}
+			}
 			}
 		}
 
