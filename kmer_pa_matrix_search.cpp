@@ -359,6 +359,27 @@ vector<CharString> createFileList(CharString kmerDatabaseList)
 	return v;
 }
 
+string reverseComplement(string str)
+{
+	reverse(str.begin(), str.end());
+	for(int i = 0; i < str.length(); i++)
+	{
+		char nucleotide = str[i];
+		switch(nucleotide)
+		{
+			case 'A':
+				str[i] = 'T';
+			case 'T':
+				str[i] = 'A';
+			case 'C':
+				str[i] = 'G';
+			case 'G':
+				str[i] = 'C';
+		}
+	}
+	return str;
+}
+
 void createKmerFileList(CharString kmers_to_search_for, std::set<uint64> &v)
 {
 	string line;
@@ -370,6 +391,9 @@ void createKmerFileList(CharString kmers_to_search_for, std::set<uint64> &v)
 			unsigned long long int encoded;
 	                encode(line, encoded);
 			v.insert(encoded);
+			unsigned long long int encoded_rc;
+			encode(reverseComplement(line), encoded_rc);
+			v.insert(encoded_rc);
 		}
 		file.close();
 	}
