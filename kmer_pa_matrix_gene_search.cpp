@@ -514,14 +514,21 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
 	int bits_at_the_end = 64 - ((numUint64 * 64) - length(kmer_dbs));
 
+	// read a kmer
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
 		string kmer;
 		decode(matrix.k, kmer, kmer_size); 
+
 		if(to_find.find(matrix.k) != to_find.end())
 		{
 			cout << kmer << "\t" << matrix.k << "\t";
 		}
+		/*
+		else
+		{
+			cout << kmer << "\t" << matrix.k << "\tNot found " << endl;
+		}*/
 
 		for (size_t i = 0; i < numUint64; ++i)
 		{
@@ -555,23 +562,33 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	return 0;
 }
 
-void kmers_from_gene(CharString filename, std::set<uint64> kmers_to_search_for)
+void kmers_from_gene(CharString filename, std::set<uint64> &kmers_to_search_for, int kmer_size)
 {
 	CharString id;
 	Dna5String seq;
-	CharString qual;
 	SeqFileIn seqFileIn(toCString(filename));
-	readRecord(id, seq, qual, seqFileIn);
+	readRecord(id, seq, seqFileIn);
 
-	for(int i = 0; i < length(seq)-30; i++)
+	for(int i = 0; i < length(seq)-kmer_size-1; i++)
 	{
-		Dna5String inf = infix(seq, i, i+31);
-
+		Dna5String inf = infix(seq, i, i+kmer_size);
 		unsigned long long int encoded;
                 encode(inf, encoded);
-		cout << inf << "\t" << encoded << endl;
-                kmers_to_search_for.insert(encoded);
+		kmers_to_search_for.insert(encoded);
+		reverseComplement(inf);
+		encode(inf, encoded);
+		kmers_to_search_for.insert(encoded);
 	}
+	close(seqFileIn);
+/*
+	cout << "Kmers to search for" << endl;
+	for(auto i : kmers_to_search_for)
+	{
+		string kmer;
+		decode(i, kmer, kmer_size);
+		cout << kmer << "\t" << i << endl;
+	}
+*/
 }
 
 // A basic template to get up and running quickly
@@ -592,7 +609,7 @@ int main(int argc, char const ** argv)
 	//aset<uint64> kmers_to_search_for = 
 	std::set<uint64> kmers_to_search_for;
 	//createKmerFileList(options.kmerListFilename, kmers_to_search_for);
-	kmers_from_gene(options.geneFilename, kmers_to_search_for);
+	kmers_from_gene(options.geneFilename, kmers_to_search_for, options.kmer_size);
 	vector<kmer> pa_matrix;
 
 	// begin cycling through the PA matrix, looking for the kmers
