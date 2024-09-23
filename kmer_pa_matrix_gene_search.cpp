@@ -534,8 +534,11 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 		{
 			uint64 byte;
 			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
-			uint64 rev = reverseBits(byte);
+			//cout << byte << endl;
+			uint64 rev = byte;
+			//uint64 rev = reverseBits(byte);
 			std::bitset<64> x(rev);
+			//cout << rev << endl;
 			if(to_find.find(matrix.k) != to_find.end())
 	                {
 				if(i < numUint64-1)
