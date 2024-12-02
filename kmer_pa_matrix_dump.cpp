@@ -468,7 +468,8 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			{
 				for(int j = 0; j < bits_at_the_end; j++)
 				{
-					cout << x[j];
+					std::bitset<64> t(byte);
+					cout << t[j];
 				}
 			}
 		}
