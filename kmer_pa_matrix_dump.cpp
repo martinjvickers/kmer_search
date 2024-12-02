@@ -424,6 +424,14 @@ int writeOutPA(vector<kmer> &pa_matrix, CharString outputFilename)
 	return 0;
 }
 
+uint64_t reverseBits(uint64_t n)
+{
+	bitset<64> bits(n);
+	string s = bits.to_string();
+	std::reverse(s.begin(), s.end());
+	return bitset<64>(s).to_ulong();
+}
+
 int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharString> kmer_dbs)
 {
         std::ifstream infile(toCString(inputFilename), std::ios::binary);
@@ -435,24 +443,34 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 
 	kmer matrix;
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
-
 	int count = 0;
+	int bits_at_the_end = 64 - ((numUint64 * 64) - length(kmer_dbs));
 
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
 	{
-		//if(count >= 10)
-		//{
-		//	break;
-		//}
-
 		string kmer;
 		decode(matrix.k, kmer, 31);
 		cout << kmer << "\t"<< matrix.k << "\t";
 		for (size_t i = 0; i < numUint64; ++i)
 		{
-			uint64 bit;
-			infile.read(reinterpret_cast<char*>(&bit), sizeof(uint64));
-			cout << bit << "\t";
+			uint64 byte;
+			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
+
+			uint64 rev = reverseBits(byte);
+			std::bitset<64> x(rev);
+
+			//cout << byte << "\t";
+			if(i != (numUint64-1))
+			{
+				cout << x; 
+			}
+			else if(i == (numUint64-1))
+			{
+				for(int j = 0; j < bits_at_the_end; j++)
+				{
+					cout << x[j];
+				}
+			}
 		}
 		cout << endl;
 		count++;
