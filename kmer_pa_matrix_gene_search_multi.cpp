@@ -501,7 +501,7 @@ uint64_t reverseBits(uint64_t n)
 	return bitset<64>(s).to_ulong();
 }
 
-int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharString> kmer_dbs, std::set<uint64> &to_find, int kmer_size)
+int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharString> kmer_dbs, int kmer_size)
 {
         std::ifstream infile(toCString(inputFilename), std::ios::binary);
 	if (!infile.is_open())
@@ -513,6 +513,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	kmer matrix;
 	size_t numUint64 = (length(kmer_dbs) + 63) / 64;
 	int bits_at_the_end = 64 - ((numUint64 * 64) - length(kmer_dbs));
+	uint64 counter = 0;
 
 	// read a kmer
 	while (infile.read(reinterpret_cast<char*>(&matrix.k), sizeof(matrix.k)))
@@ -520,7 +521,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 		string kmer;
 		decode(matrix.k, kmer, kmer_size); 
 
-		if(to_find.find(matrix.k) != to_find.end())
+		if(counter % 10000 == 0)
 		{
 			cout << kmer << "\t" << matrix.k << "\t";
 		}
@@ -531,7 +532,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			infile.read(reinterpret_cast<char*>(&byte), sizeof(uint64));
 			uint64 rev = reverseBits(byte);
 			std::bitset<64> x(rev);
-			if(to_find.find(matrix.k) != to_find.end())
+			if(counter % 10000 == 0)
 	                {
 				if(i < numUint64-1)
 				{
@@ -548,7 +549,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 			}
 		}
 
-		if(to_find.find(matrix.k) != to_find.end())
+		if(counter % 10000 == 0)
 		{
 			cout << endl;
 		}
@@ -556,32 +557,6 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 	}
 	infile.close();
 	return 0;
-}
-
-void kmers_from_gene(CharString filename, std::set<uint64> &kmers_to_search_for, int kmer_size)
-{
-	CharString id;
-	Dna5String seq;
-	SeqFileIn seqFileIn(toCString(filename));
-
-	while(!atEnd(seqFileIn))
-	{
-		readRecord(id, seq, seqFileIn);
-
-		if(length(seq)!=kmer_size)
-		{
-			cerr << "seq length is not the size of the kmer" << endl;
-			cerr << seq << "\t should be\t" << kmer_size << endl;
-		}	
-
-		unsigned long long int encoded;
-        	encode(seq, encoded);
-		kmers_to_search_for.insert(encoded);
-		reverseComplement(seq);
-		encode(seq, encoded);
-		kmers_to_search_for.insert(encoded);
-	}
-	close(seqFileIn);
 }
 
 // A basic template to get up and running quickly
@@ -598,15 +573,10 @@ int main(int argc, char const ** argv)
 	// get kmer databases from file
 	vector<CharString> kmer_dbs = createFileList(options.kmerDatabasesFilenames);
 
-	// read in a databases of kmers
-	//aset<uint64> kmers_to_search_for = 
-	std::set<uint64> kmers_to_search_for;
-	//createKmerFileList(options.kmerListFilename, kmers_to_search_for);
-	kmers_from_gene(options.geneFilename, kmers_to_search_for, options.kmer_size);
 	vector<kmer> pa_matrix;
 
 	// begin cycling through the PA matrix, looking for the kmers
-	readInPA(pa_matrix, options.outputFilename, kmer_dbs, kmers_to_search_for, options.kmer_size);
+	readInPA(pa_matrix, options.outputFilename, kmer_dbs, options.kmer_size);
 
 	return 0;
 
