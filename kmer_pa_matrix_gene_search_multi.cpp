@@ -553,6 +553,7 @@ int readInPA(vector<kmer> &pa_matrix, CharString inputFilename, vector<CharStrin
 		{
 			cout << endl;
 		}
+		counter++;
 
 	}
 	infile.close();
