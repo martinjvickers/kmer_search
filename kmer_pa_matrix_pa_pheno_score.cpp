@@ -42,8 +42,6 @@ struct kmer
 	vector<uint64> bits;
 };
 
-
-
 /*
  * Inputs:
  * 	list of accessions 	= unified_list.txt
@@ -402,7 +400,7 @@ vector<CharString> createFileList(CharString kmerDatabaseList)
 
 int readPhenotypeList(CharString phenotypesFilename,
 		      map<CharString, vector<double>> &v,
-		      vector<string> &phenotypeNames)
+		      vector<CharString> &phenotypeNames)
 {
 	string line;
 	ifstream file(toCString(phenotypesFilename));
@@ -668,15 +666,16 @@ int closeAllFiles(vector<ifstream> &fileStreams, int numFiles, vector<CharString
 	return 0;
 }	
 
-int readLineFromAllFilesBuf(vector<ifstream> &fileStreams, int numFiles, int lines, vector<kmer> &matrix_buf_vec)
+int readLineFromAllFilesBuf(vector<ifstream> &fileStreams, int numFiles, vector<kmer> &matrix_buf_vec, int mb)
 {
-	const size_t buffer_size = 2 * 1024 * 1024;
-	//const size_t buffer_size = 2;
-
+	// 1MB buffer size
+	const size_t buffer_size = 1 * 1024 * 1024;
+	//const size_t buffer_size = 64;
+	
         for(int i = 0; i < numFiles; i++)
-        {
+	{
 		vector<uint64_t> buffer(buffer_size);
-
+		
 		size_t read_count = fileStreams[i].read(reinterpret_cast<char*>(buffer.data()), buffer_size * sizeof(uint64_t)).gcount() / sizeof(uint64_t);
 		if (read_count == 0) break;  // End of file
 
@@ -687,7 +686,6 @@ int readLineFromAllFilesBuf(vector<ifstream> &fileStreams, int numFiles, int lin
 		{
 			uint64_t k = buffer[j];
 			uint64_t b = buffer[j+1];
-			//cout << i << "\t " << k << "\t" << b << endl;
 
 			if(i == 0) // populate the matrix_buf_vec if not done before
 			{
@@ -705,48 +703,116 @@ int readLineFromAllFilesBuf(vector<ifstream> &fileStreams, int numFiles, int lin
 			}
 
 			kmer_counter++;
-				
 		}
-		cout << i << " processed " << buffer_size/2 << " kmers" << endl;
-		
-/*
-			
-                        string kmer;
-                        decode(matrix.k, kmer, 31);
+	}
 
-                        if(count >= lines)
-                                break;
-                        uint64 byte;
-                        fileStreams[i].read(reinterpret_cast<char*>(&byte), sizeof(uint64));
-                        matrix_buf[matrix.k].push_back(byte);
-
-                        count++;
-*/
-        }
         return 0;
 }
 
-int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames)
+/* process phenotype scores
+ *    take the matrix_buf and the names of each accession
+ *    I have a kmer vector AGT, 000011010
+ *    
+ */
+int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &accessionNamesInPA,
+			     map<CharString, vector<double>> &phenotypes, int num_phenoms,
+			     vector<int> &pheno_to_accession_map)
+{
+	size_t numUint64 = (accessionNamesInPA.size() + 63) / 64;
+
+	vector<double> vec(num_phenoms, 0.0);
+
+	//loop through each kmer in the buffer
+	for(auto k : matrix_buf)
+	{
+		int num_bits_set = 0;
+		fill(vec.begin(), vec.end(), 0.0); // reset values back to zero
+
+		// loop through each accession with a phenotype
+		for(auto i : pheno_to_accession_map)
+		{
+			//cout << accessionNamesInPA[i] << " exists" << endl;
+			auto &phenotype_vec = phenotypes[accessionNamesInPA[i]];
+
+			// if so, loop through the phenotyp to sum the score
+			//int byte_to_edit = (((i+1) + 63) / 64)-1;
+			//int bit_to_edit = i - (byte_to_edit*64);
+
+			int byte_to_edit = i / 64;
+			int bit_to_edit = i % 64;
+
+			//cout << accessionNamesInPA[i] << " exists at position " << i << " byte " << byte_to_edit << " " << bit_to_edit;
+			// is this bit set?
+			if (k.bits[byte_to_edit] & (1ULL << bit_to_edit))
+			{
+				num_bits_set++;
+				//cout << "bit is set ";
+				for(int p = 0; p < num_phenoms; p++)
+				{
+					//vec[p] = vec[p] + (1 * phenotypes[accessionNamesInPA[i]][p]);
+					vec[p] = vec[p] + (1 * phenotype_vec[p]);
+					//	cout << vec[p] << " ";
+				}
+			}
+				//cout << endl;
+		}
+		
+/*
+		string kmer;
+		decode(k.k, kmer, 31);
+		cout << kmer << "\t";
+		for(auto s : vec)
+		{
+			cout << s << "\t";
+			cout << s/num_bits_set << "\t";
+		}
+		cout << num_bits_set << "\t";
+		cout << endl;
+*/
+	}
+
+	return 0;
+}
+
+int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map<CharString, vector<double>> &phenotypes, 
+	 vector<CharString> &kmer_dbs, vector<CharString> &phenotypeNames, vector<int> &pheno_to_accession_map)
 {
 	int counter = 0;
+	int num_mb = 1000; //AKA 1GB
 	vector<kmer> matrix_buf;
 	do
 	{
+		auto start = high_resolution_clock::now();
 		matrix_buf.clear();
+		auto stop = high_resolution_clock::now();
+		auto duration = duration_cast<seconds>(stop - start);
+		cout << "Clearing previous buffer " << duration.count() << endl;
 		// test break while working
-		//if(counter >=10)
+		//if(counter >= 4)
 		//	break;
 
-		readLineFromAllFilesBuf(fileStreams, matrixFilenames.size(), 6, matrix_buf);
+		start = high_resolution_clock::now();
+		readLineFromAllFilesBuf(fileStreams, matrixFilenames.size(), matrix_buf, num_mb);
+		stop = high_resolution_clock::now();
+		duration = duration_cast<seconds>(stop - start);
+		cout << "Read 1 block of 1MB in " << duration.count() << endl;
+
+		// print the first one
+		/*
 		cout << matrix_buf[0].k << "\t";
 		for(auto i : matrix_buf[0].bits)
 		{
 			cout << i << "\t";
 		}
 		cout << endl;
-
+		*/
 
 		// now we actually process something
+		start = high_resolution_clock::now();
+		process_phenotype_scores(matrix_buf, kmer_dbs, phenotypes, phenotypeNames.size(), pheno_to_accession_map);
+		stop = high_resolution_clock::now();
+		duration = duration_cast<seconds>(stop - start);
+		cout << "Time to process that block " << duration.count() << endl;
 
 		counter++;
 
@@ -755,15 +821,18 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames)
 	return 0;
 }
 
-int process(vector<CharString> &matrixFilenames)
+// this function creates and opens the file streams, initiates the work and then closes them.
+int process(vector<CharString> &matrixFilenames, vector<CharString> &kmer_dbs,
+	    map<CharString, vector<double>> &phenotypes, vector<CharString> &phenotypeNames,
+	    vector<int> &pheno_to_accession_map)
 {
 	// open files
 	vector<ifstream> fileStreams;
 	fileStreams.resize(matrixFilenames.size());
 	openAllFiles(fileStreams, matrixFilenames.size(), matrixFilenames);
 
-	work(fileStreams, matrixFilenames);
-	//readLineFromAllFiles(fileStreams, matrixFilenames.size());
+	work(fileStreams, matrixFilenames, phenotypes, kmer_dbs, phenotypeNames, pheno_to_accession_map);
+
 	cout << "finished" << endl;
 
 	// close files
@@ -772,9 +841,20 @@ int process(vector<CharString> &matrixFilenames)
 	return 0;
 }
 
+vector<int> createPheno2AM(vector<CharString> accession_names, map<CharString, vector<double>> phenotypes)
+{
+	vector<int> pheno_to_accession_map;
 
+	for(int a = 0; a < accession_names.size(); a++)
+	{	
+		if (phenotypes.find(accession_names[a]) != phenotypes.end())
+		{
+			pheno_to_accession_map.push_back(a);
+		}
+	}
 
-
+	return pheno_to_accession_map;
+}
 
 // A basic template to get up and running quickly
 // ./kmer_pa_matrix_search -k examples/massive_list.txt -i meh.out -l kmer.txt -s 3
@@ -791,13 +871,17 @@ int main(int argc, char const ** argv)
 	}
 
 	// get list of accessions
-	vector<CharString> kmer_dbs = createFileList(options.kmerDatabasesFilenames);
+	vector<CharString> accession_names = createFileList(options.kmerDatabasesFilenames);
 
 	// get phenotypes
 	
 	map<CharString, vector<double>> phenotypes;
-	vector<string> phenotypeNames;
-	readPhenotypeList(options.phenotypeFilename, phenotypes, phenotypeNames);
+	vector<CharString> phenotypeNames;
+	readPhenotypeList(options.phenotypeFilename, phenotypes, ref(phenotypeNames));
+
+
+	// what we need is a vector of mappings from the phenotype name to the location in kmer_dbs
+	vector<int> pheno_to_accession_map = createPheno2AM(accession_names, phenotypes);
 
 	/*
 	for(auto i : phenotypeNames)
@@ -809,24 +893,8 @@ int main(int argc, char const ** argv)
 	// get list of matrix files
 	vector<CharString> matrixFilenames = createFileList(options.outputFilename);
 
-	process(matrixFilenames);
+	process(matrixFilenames, accession_names, phenotypes, phenotypeNames, pheno_to_accession_map);
 
-	/*
-	for(auto i : matrixFilenames)
-		cout << i << endl;
-	*/
-
-/*
-	// read in a databases of kmers
-	//aset<uint64> kmers_to_search_for = 
-	std::set<uint64> kmers_to_search_for;
-	//createKmerFileList(options.kmerListFilename, kmers_to_search_for);
-	kmers_from_gene(options.geneFilename, kmers_to_search_for, options.kmer_size);
-	vector<kmer> pa_matrix;
-
-	// begin cycling through the PA matrix, looking for the kmers
-	readInPA(pa_matrix, options.outputFilename, kmer_dbs, kmers_to_search_for, options.kmer_size);
-*/
 	return 0;
 
 }
