@@ -34,7 +34,11 @@ struct ModifyStringOptions
 	CharString outputFilename;
 	bool createPAfile;
 	CharString geneFilename;
+	int threads = 1;
+	int blocks = 1;
 };
+
+ModifyStringOptions options; // global
 
 struct kmer
 {
@@ -73,7 +77,13 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
 				   ArgParseArgument::STRING, "TEXT", true));
   setRequired(parser, "input-matrix-file");
 
+  addOption(parser, ArgParseOption("t", "threads",
+			           "Number of threads to use. Ideally the same as the number of cpu-cores you have available to you.",
+				   ArgParseArgument::INTEGER, "INT"));
 
+  addOption(parser, ArgParseOption("b", "blocks",
+			           "Number of blocks of 1MB to read into memory for each PA matrix you have",
+				   ArgParseArgument::INTEGER, "INT"));
 
   addOption(parser, ArgParseOption("g", "gene-of-interest",
                                    "This is a fasta file of your gene.",
@@ -96,6 +106,8 @@ seqan2::ArgumentParser::ParseResult parseCommandLine(ModifyStringOptions & optio
   getOptionValue(options.outputFilename, parser, "input-matrix-file");
   getOptionValue(options.geneFilename, parser, "gene-of-interest");
   getOptionValue(options.kmer_size, parser, "kmer-size");
+  getOptionValue(options.threads, parser, "threads");
+  getOptionValue(options.blocks, parser, "blocks");
 
   return ArgumentParser::PARSE_OK;
 }
@@ -371,7 +383,8 @@ int checkForPA(CharString masterKmers, CharString currentKmers, CharString input
 			infile.write(reinterpret_cast<char*>(&byte), sizeof(byte));
 		}
 
-		position = position + ((numUint64+1)*8);
+		//position = position + ((numUint64+1)*8);
+		position += static_cast<std::streamoff>((numUint64 + 1) * 8);
 		count++;
 	}
 
@@ -670,43 +683,143 @@ int readLineFromAllFilesBuf(vector<ifstream> &fileStreams, int numFiles, vector<
 {
 	// 1MB buffer size
 	const size_t buffer_size = 1 * 1024 * 1024;
-	//const size_t buffer_size = 64;
-	
+
+	// work on one file
         for(int i = 0; i < numFiles; i++)
 	{
-		vector<uint64_t> buffer(buffer_size);
-		
-		size_t read_count = fileStreams[i].read(reinterpret_cast<char*>(buffer.data()), buffer_size * sizeof(uint64_t)).gcount() / sizeof(uint64_t);
-		if (read_count == 0) break;  // End of file
-
-		kmer matrix;
 		int kmer_counter = 0;
 
-		for(int j = 0; j < read_count; j+=2)
+		// populate matrix_buf_vec with mb X buffersize of data
+		for(int m = 0; m < mb; m++)
 		{
-			uint64_t k = buffer[j];
-			uint64_t b = buffer[j+1];
+			vector<uint64_t> buffer(buffer_size);
+		
+			size_t read_count = fileStreams[i].read(reinterpret_cast<char*>(buffer.data()), buffer_size * sizeof(uint64_t)).gcount() / sizeof(uint64_t);
+			if (read_count == 0) break;  // End of file
 
-			if(i == 0) // populate the matrix_buf_vec if not done before
+			// add everything to memory
+			for(int j = 0; j < read_count; j+=2)
 			{
-				kmer result;
-				result.k = k;
-				vector<uint64_t> vec(numFiles, 0);
-				vec[i] = b;
-				result.bits = vec;
+				uint64_t k = buffer[j];
+				uint64_t b = buffer[j+1];
+
+				if(i == 0) // populate the matrix_buf_vec if not done before
+				{
+					kmer result;
+					result.k = k;
+					vector<uint64_t> vec(numFiles, 0);
+					vec[i] = b;
+					result.bits = vec;
 				
-				matrix_buf_vec.push_back(result);
-			}
-			else
-			{
-				matrix_buf_vec[kmer_counter].bits[i] = b;
-			}
+					matrix_buf_vec.push_back(result);
+				}
+				else
+				{
+					matrix_buf_vec[kmer_counter].bits[i] = b;
+				}
 
-			kmer_counter++;
+				kmer_counter++;
+			}
 		}
 	}
 
         return 0;
+}
+
+struct ThreadResult {
+    kmer k_value;
+    vector<double> vec;
+};
+
+struct ThreadData {
+    vector<kmer> *matrix_buf;
+    vector<CharString> *accessionNamesInPA;
+    map<CharString, vector<double>> *phenotypes;
+    vector<int> *pheno_to_accession_map;
+    int num_phenoms;
+    size_t start_idx, end_idx;
+    vector<ThreadResult> *results; // Store results
+    pthread_mutex_t *mutex; // Synchronization
+};
+
+void *process_chunk(void *arg) {
+    ThreadData *data = static_cast<ThreadData *>(arg);
+    vector<kmer> &matrix_buf = *data->matrix_buf;
+    vector<CharString> &accessionNamesInPA = *data->accessionNamesInPA;
+    map<CharString, vector<double>> &phenotypes = *data->phenotypes;
+    vector<int> &pheno_to_accession_map = *data->pheno_to_accession_map;
+    int num_phenoms = data->num_phenoms;
+
+    vector<double> vec(num_phenoms, 0.0);
+    vector<ThreadResult> local_results; // Store local results
+
+    for (size_t idx = data->start_idx; idx < data->end_idx; ++idx) {
+        auto &k = matrix_buf[idx];
+        fill(vec.begin(), vec.end(), 0.0); // Reset vec per k-mer
+        int num_bits_set = 0;
+
+        for (auto i : pheno_to_accession_map) {
+            CharString &accession = accessionNamesInPA[i];
+            auto &phenotype_vec = phenotypes[accession];
+
+            int byte_to_edit = i / 64;
+            int bit_to_edit = i % 64;
+
+            if (k.bits[byte_to_edit] & (1ULL << bit_to_edit)) {
+                num_bits_set++;
+                for (int p = 0; p < num_phenoms; p++) {
+                    vec[p] += phenotype_vec[p];
+                }
+            }
+        }
+	//Check if vec contains values > 0
+	if (any_of(vec.begin(), vec.end(), [](double v) { return v > 0.0; })) 
+	{
+		local_results.push_back({k, vec});
+	}
+
+    }
+
+    // Lock and merge local results into the shared results
+    pthread_mutex_lock(data->mutex);
+    data->results->insert(data->results->end(), local_results.begin(), local_results.end());
+    pthread_mutex_unlock(data->mutex);
+
+    pthread_exit(nullptr);
+}
+
+
+
+int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &accessionNamesInPA,
+		             map<CharString, vector<double>> &phenotypes, int num_phenoms,
+			     vector<int> &pheno_to_accession_map, int threads, vector<ThreadResult> &results)
+{
+    const int NUM_THREADS = options.threads; // Adjust based on your CPU cores
+    pthread_t mythreads[NUM_THREADS];
+    ThreadData thread_data[NUM_THREADS];
+    pthread_mutex_t mutex;
+    pthread_mutex_init(&mutex, nullptr);
+
+
+    size_t chunk_size = matrix_buf.size() / NUM_THREADS;
+
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        thread_data[t] = {
+            &matrix_buf, &accessionNamesInPA, &phenotypes, &pheno_to_accession_map,
+            num_phenoms, t * chunk_size, (t == NUM_THREADS - 1) ? matrix_buf.size() : (t + 1) * chunk_size,
+	    &results, &mutex
+        };
+        pthread_create(&mythreads[t], nullptr, process_chunk, &thread_data[t]);
+    }
+
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        pthread_join(mythreads[t], nullptr);
+    }
+
+    pthread_mutex_destroy(&mutex);
+
+    return 0;
+
 }
 
 /* process phenotype scores
@@ -732,32 +845,25 @@ int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &acces
 		for(auto i : pheno_to_accession_map)
 		{
 			//cout << accessionNamesInPA[i] << " exists" << endl;
-			auto &phenotype_vec = phenotypes[accessionNamesInPA[i]];
-
-			// if so, loop through the phenotyp to sum the score
-			//int byte_to_edit = (((i+1) + 63) / 64)-1;
-			//int bit_to_edit = i - (byte_to_edit*64);
+			//auto &phenotype_vec = phenotypes[accessionNamesInPA[i]];
+			CharString &accession = accessionNamesInPA[i];
+			auto &phenotype_vec = phenotypes[accession];
 
 			int byte_to_edit = i / 64;
 			int bit_to_edit = i % 64;
 
-			//cout << accessionNamesInPA[i] << " exists at position " << i << " byte " << byte_to_edit << " " << bit_to_edit;
-			// is this bit set?
 			if (k.bits[byte_to_edit] & (1ULL << bit_to_edit))
 			{
 				num_bits_set++;
-				//cout << "bit is set ";
 				for(int p = 0; p < num_phenoms; p++)
 				{
-					//vec[p] = vec[p] + (1 * phenotypes[accessionNamesInPA[i]][p]);
-					vec[p] = vec[p] + (1 * phenotype_vec[p]);
-					//	cout << vec[p] << " ";
+					//vec[p] = vec[p] + (1 * phenotype_vec[p]);
+					vec[p] += phenotype_vec[p];
+
 				}
 			}
-				//cout << endl;
 		}
-		
-/*
+		/*
 		string kmer;
 		decode(k.k, kmer, 31);
 		cout << kmer << "\t";
@@ -767,9 +873,24 @@ int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &acces
 			cout << s/num_bits_set << "\t";
 		}
 		cout << num_bits_set << "\t";
-		cout << endl;
-*/
+		cout << endl;*/
 	}
+
+	return 0;
+}
+
+int printAresult(vector<ThreadResult> &results)
+{
+	//cout << results.back().k_value.k << "\t";
+	string kmer;
+	decode(results.back().k_value.k, kmer, 31);
+
+	cout << kmer << "\t";
+	for(auto v : results.back().vec)
+	{
+		cout << v << "\t";
+	}
+	cout << endl;
 
 	return 0;
 }
@@ -778,41 +899,36 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 	 vector<CharString> &kmer_dbs, vector<CharString> &phenotypeNames, vector<int> &pheno_to_accession_map)
 {
 	int counter = 0;
-	int num_mb = 1000; //AKA 1GB
+	int num_mb = options.blocks; 
 	vector<kmer> matrix_buf;
+	vector<ThreadResult> results;
 	do
 	{
 		auto start = high_resolution_clock::now();
 		matrix_buf.clear();
 		auto stop = high_resolution_clock::now();
 		auto duration = duration_cast<seconds>(stop - start);
-		cout << "Clearing previous buffer " << duration.count() << endl;
+		cout << "Clearing previous buffer " << duration.count() << "s" << endl;
 		// test break while working
 		//if(counter >= 4)
 		//	break;
 
+		// read from your files in num_mb blocks of 1MB
 		start = high_resolution_clock::now();
 		readLineFromAllFilesBuf(fileStreams, matrixFilenames.size(), matrix_buf, num_mb);
 		stop = high_resolution_clock::now();
 		duration = duration_cast<seconds>(stop - start);
-		cout << "Read 1 block of 1MB in " << duration.count() << endl;
+		cout << "Read " << num_mb << " block(s) of 1MB in " << duration.count() << "s" << endl;
 
-		// print the first one
-		/*
-		cout << matrix_buf[0].k << "\t";
-		for(auto i : matrix_buf[0].bits)
-		{
-			cout << i << "\t";
-		}
-		cout << endl;
-		*/
 
 		// now we actually process something
 		start = high_resolution_clock::now();
-		process_phenotype_scores(matrix_buf, kmer_dbs, phenotypes, phenotypeNames.size(), pheno_to_accession_map);
+		process_phenotype_scores(matrix_buf, kmer_dbs, phenotypes, phenotypeNames.size(), pheno_to_accession_map, 4, results);
 		stop = high_resolution_clock::now();
 		duration = duration_cast<seconds>(stop - start);
-		cout << "Time to process that block " << duration.count() << endl;
+		cout << "Time to process that block " << duration.count() << "s " << results.size() << endl;
+
+		printAresult(results);
 
 		counter++;
 
@@ -864,7 +980,7 @@ vector<int> createPheno2AM(vector<CharString> accession_names, map<CharString, v
 int main(int argc, char const ** argv)
 {
 	//parse our options
-	ModifyStringOptions options;
+	//ModifyStringOptions options; //I've made options global
 	ArgumentParser::ParseResult res = parseCommandLine(options,argc, argv);
 	if(res != ArgumentParser::PARSE_OK){
 		return res == ArgumentParser::PARSE_ERROR;
