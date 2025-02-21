@@ -478,14 +478,20 @@ int printResult(vector<ThreadResult> &results)
 {
 	for(auto r : results)
 	{
+		// decode and print kmer
 		string kmer;
-		decode(results.back().k_value.k, kmer, 31);
+		decode(r.k_value.k, kmer, 31);
 
 		cout << kmer << "\t";
-		for(auto v : results.back().vec)
+
+		// print the phenotype scores
+		for(auto v : r.vec)
 		{
 			cout << v << "\t";
 		}
+
+		// print the number of bits that were set
+		cout << r.num_bits_set<< "\t";
 		cout << endl;
 	}
 	return 0;
