@@ -405,7 +405,7 @@ void *process_chunk(void *arg)
             		}
         	}
 		//Check if vec contains values > 0
-		if (any_of(vec.begin(), vec.end(), [](double v) { return v > 0.0; })) 
+		if (any_of(vec.begin(), vec.end(), [](double v) { return v > 0.01; })) 
 		{
 			local_results.push_back({k, vec, num_bits_set});
 		}
@@ -451,7 +451,7 @@ int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &acces
     	return 0;
 }
 
-int printResult(vector<ThreadResult> &results)
+int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_map)
 {
 	for(auto r : results)
 	{
@@ -470,22 +470,21 @@ int printResult(vector<ThreadResult> &results)
 		// print the number of bits that were set
 		cout << r.num_bits_set<< "\t";
 
-		// experimental 
-		/*
+		// experimental:
+		// print out the PA bits of ONLY the accession in the
+		// phenotype file
                 for(auto i : pheno_to_accession_map)
 		{
-			CharString &accession = accessionNamesInPA[i];
-			auto &phenotype_vec = phenotypes[accession];
 			int byte_to_edit = i / 64;
 			int bit_to_edit = i % 64;
-		} */
+		}
 
+		// print the whole PA bits
 		for(auto b : r.k_value.bits)
 		{
 			//get bitset
-			//reverse it to little endian for readability
-			//print
 			uint64 rev = reverseBits(b);
+			//reverse it to little endian for readability
 			std::bitset<64> x(rev);
 			cout << x;
 		}
@@ -528,7 +527,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		duration = duration_cast<seconds>(stop - start);
 		cerr << "Time to process that block " << duration.count() << "s " << results.size() << endl;
 
-		printResult(results);
+		printResult(results, pheno_to_accession_map);
 
 		counter++;
 
