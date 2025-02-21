@@ -492,6 +492,27 @@ int printResult(vector<ThreadResult> &results)
 
 		// print the number of bits that were set
 		cout << r.num_bits_set<< "\t";
+
+		// experimental 
+		/*
+                for(auto i : pheno_to_accession_map)
+		{
+			CharString &accession = accessionNamesInPA[i];
+			auto &phenotype_vec = phenotypes[accession];
+			int byte_to_edit = i / 64;
+			int bit_to_edit = i % 64;
+		} */
+
+		for(auto b : r.k_value.bits)
+		{
+			//get bitset
+			//reverse it to little endian for readability
+			//print
+			uint64 rev = reverseBits(b);
+			std::bitset<64> x(rev);
+			cout << x;
+		}
+
 		cout << endl;
 	}
 	return 0;
