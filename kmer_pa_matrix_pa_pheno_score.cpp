@@ -308,7 +308,7 @@ int openAllFiles(vector<ifstream> &fileStreams, int numFiles, vector<CharString>
 		if (!fileStreams[i])
 		{
 			std::cerr << "Error opening file: " << filenames[i] << std::endl;
-			return 1; // Exit if any file fails to open
+			return 1; 
 		}
 	}
 	return 0;
@@ -377,6 +377,7 @@ struct ThreadResult
 {
 	kmer k_value;
 	vector<double> vec;
+	int num_bits_set;
 };
 
 struct ThreadData
@@ -391,106 +392,25 @@ struct ThreadData
 	pthread_mutex_t *mutex; // Synchronization
 };
 
-void *process_chunk(void *arg) {
-    ThreadData *data = static_cast<ThreadData *>(arg);
-    vector<kmer> &matrix_buf = *data->matrix_buf;
-    vector<CharString> &accessionNamesInPA = *data->accessionNamesInPA;
-    map<CharString, vector<double>> &phenotypes = *data->phenotypes;
-    vector<int> &pheno_to_accession_map = *data->pheno_to_accession_map;
-    int num_phenoms = data->num_phenoms;
-
-    vector<double> vec(num_phenoms, 0.0);
-    vector<ThreadResult> local_results; // Store local results
-
-    for (size_t idx = data->start_idx; idx < data->end_idx; ++idx) {
-        auto &k = matrix_buf[idx];
-        fill(vec.begin(), vec.end(), 0.0); // Reset vec per k-mer
-        int num_bits_set = 0;
-
-        for (auto i : pheno_to_accession_map) {
-            CharString &accession = accessionNamesInPA[i];
-            auto &phenotype_vec = phenotypes[accession];
-
-            int byte_to_edit = i / 64;
-            int bit_to_edit = i % 64;
-
-            if (k.bits[byte_to_edit] & (1ULL << bit_to_edit)) {
-                num_bits_set++;
-                for (int p = 0; p < num_phenoms; p++) {
-                    vec[p] += phenotype_vec[p];
-                }
-            }
-        }
-	//Check if vec contains values > 0
-	if (any_of(vec.begin(), vec.end(), [](double v) { return v > 0.0; })) 
-	{
-		local_results.push_back({k, vec});
-	}
-
-    }
-
-    // Lock and merge local results into the shared results
-    pthread_mutex_lock(data->mutex);
-    data->results->insert(data->results->end(), local_results.begin(), local_results.end());
-    pthread_mutex_unlock(data->mutex);
-
-    pthread_exit(nullptr);
-}
-
-int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &accessionNamesInPA,
-		             map<CharString, vector<double>> &phenotypes, int num_phenoms,
-			     vector<int> &pheno_to_accession_map, int threads, vector<ThreadResult> &results)
+void *process_chunk(void *arg)
 {
-    const int NUM_THREADS = options.threads; // Adjust based on your CPU cores
-    pthread_t mythreads[NUM_THREADS];
-    ThreadData thread_data[NUM_THREADS];
-    pthread_mutex_t mutex;
-    pthread_mutex_init(&mutex, nullptr);
-
-
-    size_t chunk_size = matrix_buf.size() / NUM_THREADS;
-
-    for (int t = 0; t < NUM_THREADS; ++t)
-    {
-        thread_data[t] = {
-            &matrix_buf, &accessionNamesInPA, &phenotypes, &pheno_to_accession_map,
-            num_phenoms, t * chunk_size, (t == NUM_THREADS - 1) ? matrix_buf.size() : (t + 1) * chunk_size,
-	    &results, &mutex
-        };
-        pthread_create(&mythreads[t], nullptr, process_chunk, &thread_data[t]);
-    }
-
-    for (int t = 0; t < NUM_THREADS; ++t) {
-        pthread_join(mythreads[t], nullptr);
-    }
-
-    pthread_mutex_destroy(&mutex);
-
-    return 0;
-
-}
-
-/* process phenotype scores
- *    take the matrix_buf and the names of each accession
- *    I have a kmer vector AGT, 000011010
- *    
- */
-int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &accessionNamesInPA,
-			     map<CharString, vector<double>> &phenotypes, int num_phenoms,
-			     vector<int> &pheno_to_accession_map)
-{
-	size_t numUint64 = (accessionNamesInPA.size() + 63) / 64;
+	ThreadData *data = static_cast<ThreadData *>(arg);
+	vector<kmer> &matrix_buf = *data->matrix_buf;
+	vector<CharString> &accessionNamesInPA = *data->accessionNamesInPA;
+	map<CharString, vector<double>> &phenotypes = *data->phenotypes;
+	vector<int> &pheno_to_accession_map = *data->pheno_to_accession_map;
+	int num_phenoms = data->num_phenoms;
 
 	vector<double> vec(num_phenoms, 0.0);
+	vector<ThreadResult> local_results; // Store local results
 
-	//loop through each kmer in the buffer
-	for(auto k : matrix_buf)
+    	for(size_t idx = data->start_idx; idx < data->end_idx; ++idx) 
 	{
-		int num_bits_set = 0;
-		fill(vec.begin(), vec.end(), 0.0); // reset values back to zero
+        	auto &k = matrix_buf[idx];
+        	fill(vec.begin(), vec.end(), 0.0); // Reset vec per k-mer
+        	int num_bits_set = 0;
 
-		// loop through each accession with a phenotype
-		for(auto i : pheno_to_accession_map)
+        	for(auto i : pheno_to_accession_map)
 		{
 			CharString &accession = accessionNamesInPA[i];
 			auto &phenotype_vec = phenotypes[accession];
@@ -498,22 +418,63 @@ int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &acces
 			int byte_to_edit = i / 64;
 			int bit_to_edit = i % 64;
 
-			if (k.bits[byte_to_edit] & (1ULL << bit_to_edit))
+			if(k.bits[byte_to_edit] & (1ULL << bit_to_edit))
 			{
-				num_bits_set++;
-				for(int p = 0; p < num_phenoms; p++)
+                		num_bits_set++;
+                		for(int p = 0; p < num_phenoms; p++)
 				{
-					vec[p] += phenotype_vec[p];
-
-				}
-			}
+                    			vec[p] += phenotype_vec[p];
+                		}
+            		}
+        	}
+		//Check if vec contains values > 0
+		if (any_of(vec.begin(), vec.end(), [](double v) { return v > 0.0; })) 
+		{
+			local_results.push_back({k, vec, num_bits_set});
 		}
 	}
 
-	return 0;
+	// Lock and merge local results into the shared results
+	pthread_mutex_lock(data->mutex);
+	data->results->insert(data->results->end(), local_results.begin(), local_results.end());
+	pthread_mutex_unlock(data->mutex);
+
+	pthread_exit(nullptr);
 }
 
-int printAresult(vector<ThreadResult> &results)
+int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &accessionNamesInPA,
+		             map<CharString, vector<double>> &phenotypes, int num_phenoms,
+			     vector<int> &pheno_to_accession_map, int threads, vector<ThreadResult> &results)
+{
+	const int NUM_THREADS = options.threads;
+	pthread_t mythreads[NUM_THREADS];
+	ThreadData thread_data[NUM_THREADS];
+	pthread_mutex_t mutex;
+	pthread_mutex_init(&mutex, nullptr);
+
+	size_t chunk_size = matrix_buf.size() / NUM_THREADS;
+
+	for (int t = 0; t < NUM_THREADS; ++t)
+	{
+        	thread_data[t] = {
+			&matrix_buf, &accessionNamesInPA, &phenotypes, &pheno_to_accession_map,
+            		num_phenoms, t * chunk_size, (t == NUM_THREADS - 1) ? matrix_buf.size() : (t + 1) * chunk_size,
+	    		&results, &mutex
+        	};
+        	pthread_create(&mythreads[t], nullptr, process_chunk, &thread_data[t]);
+    	}
+
+    	for (int t = 0; t < NUM_THREADS; ++t)
+	{
+        	pthread_join(mythreads[t], nullptr);
+    	}
+
+    	pthread_mutex_destroy(&mutex);
+
+    	return 0;
+}
+
+int printResult(vector<ThreadResult> &results)
 {
 	for(auto r : results)
 	{
@@ -563,7 +524,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		duration = duration_cast<seconds>(stop - start);
 		cout << "Time to process that block " << duration.count() << "s " << results.size() << endl;
 
-		printAresult(results);
+		printResult(results);
 
 		counter++;
 
@@ -584,7 +545,7 @@ int process(vector<CharString> &matrixFilenames, vector<CharString> &kmer_dbs,
 
 	work(fileStreams, matrixFilenames, phenotypes, kmer_dbs, phenotypeNames, pheno_to_accession_map);
 
-	cout << "finished" << endl;
+	cout << "Finished" << endl;
 
 	// close files
 	closeAllFiles(fileStreams, matrixFilenames.size(), matrixFilenames);
