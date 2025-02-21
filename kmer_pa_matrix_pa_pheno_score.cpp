@@ -268,34 +268,11 @@ void createKmerFileList(CharString kmers_to_search_for, std::set<uint64> &v)
 	}
 }
 
-int writeOutPA(vector<kmer> &pa_matrix, CharString outputFilename)
-{
-        // write out
-	std::ofstream outfile(toCString(outputFilename), std::ios::binary);
-	if (!outfile.is_open())
-	{
-		std::cerr << "Failed to open file: " << outputFilename << std::endl;
-		return 1;
-	}
-
-	for(auto i : pa_matrix)
-	{
-		outfile.write(reinterpret_cast<const char*>(&i.k), sizeof(i.k));
-		for (auto bit : i.bits)
-		{
-			outfile.write(reinterpret_cast<const char*>(&bit), sizeof(bit));
-		}
-	}
-	outfile.close();
-
-	return 0;
-}
-
 uint64_t reverseBits(uint64_t n)
 {
 	bitset<64> bits(n);
 	string s = bits.to_string();
-	std::reverse(s.begin(), s.end());
+	reverse(s.begin(), s.end());
 	return bitset<64>(s).to_ulong();
 }
 
@@ -307,7 +284,7 @@ int openAllFiles(vector<ifstream> &fileStreams, int numFiles, vector<CharString>
 		fileStreams[i].open(toCString(filenames[i]), std::ios::binary);
 		if (!fileStreams[i])
 		{
-			std::cerr << "Error opening file: " << filenames[i] << std::endl;
+			cerr << "Error opening file: " << filenames[i] << std::endl;
 			return 1; 
 		}
 	}
@@ -321,7 +298,7 @@ int closeAllFiles(vector<ifstream> &fileStreams, int numFiles, vector<CharString
 	for (int i = 0; i < numFiles; i++)
 	{
 		fileStreams[i].close();
-		cout << "Closed\t" << filenames[i] << endl;
+		cerr << "Closed\t" << filenames[i] << endl;
 	}
 	return 0;
 }	
@@ -531,7 +508,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		matrix_buf.clear();
 		auto stop = high_resolution_clock::now();
 		auto duration = duration_cast<seconds>(stop - start);
-		cout << "Clearing previous buffer " << duration.count() << "s" << endl;
+		cerr << "Clearing previous buffer " << duration.count() << "s" << endl;
 		// test break while working
 		//if(counter >= 4)
 		//	break;
@@ -541,7 +518,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		readLineFromAllFilesBuf(fileStreams, matrixFilenames.size(), matrix_buf, num_mb);
 		stop = high_resolution_clock::now();
 		duration = duration_cast<seconds>(stop - start);
-		cout << "Read " << num_mb << " block(s) of 1MB in " << duration.count() << "s" << endl;
+		cerr << "Read " << num_mb << " block(s) of 1MB in " << duration.count() << "s" << endl;
 
 
 		// now we actually process something
@@ -549,7 +526,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		process_phenotype_scores(matrix_buf, kmer_dbs, phenotypes, phenotypeNames.size(), pheno_to_accession_map, 4, results);
 		stop = high_resolution_clock::now();
 		duration = duration_cast<seconds>(stop - start);
-		cout << "Time to process that block " << duration.count() << "s " << results.size() << endl;
+		cerr << "Time to process that block " << duration.count() << "s " << results.size() << endl;
 
 		printResult(results);
 
@@ -572,7 +549,7 @@ int process(vector<CharString> &matrixFilenames, vector<CharString> &kmer_dbs,
 
 	work(fileStreams, matrixFilenames, phenotypes, kmer_dbs, phenotypeNames, pheno_to_accession_map);
 
-	cout << "Finished" << endl;
+	cerr << "Finished" << endl;
 
 	// close files
 	closeAllFiles(fileStreams, matrixFilenames.size(), matrixFilenames);
