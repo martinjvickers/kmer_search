@@ -423,7 +423,7 @@ int process_phenotype_scores(vector<kmer> &matrix_buf, vector<CharString> &acces
     	return 0;
 }
 
-int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_map)
+int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_map, int num_accessions)
 {
 	for(auto r : results)
 	{
@@ -452,13 +452,23 @@ int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_m
 		}
 
 		// print the whole PA bits
-		for(auto b : r.k_value.bits)
+		int size = r.k_value.bits.size();
+		for(int i = 0; i < size-1; i++)
 		{
 			//get bitset
-			uint64 rev = reverseBits(b);
+			uint64 rev = reverseBits(r.k_value.bits[i]);
 			//reverse it to little endian for readability
 			std::bitset<64> x(rev);
 			cout << x;
+		}
+		// process the last bitset which could be shorter than 64bit
+		int bits_to_read = num_accessions - ((size-1)*64);
+		uint64 rev = reverseBits(r.k_value.bits[size]);
+		std::bitset<64> x(rev);
+	
+		for(int i = 0; i < bits_to_read; i++)
+		{
+			cout << x[i];
 		}
 
 		cout << endl;
@@ -467,7 +477,7 @@ int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_m
 }
 
 int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map<CharString, vector<double>> &phenotypes, 
-	 vector<CharString> &kmer_dbs, vector<CharString> &phenotypeNames, vector<int> &pheno_to_accession_map)
+	 vector<CharString> &accession_names, vector<CharString> &phenotypeNames, vector<int> &pheno_to_accession_map)
 {
 	int counter = 0;
 	int num_mb = options.blocks; 
@@ -491,12 +501,12 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 
 		// now we actually process something
 		start = high_resolution_clock::now();
-		process_phenotype_scores(matrix_buf, kmer_dbs, phenotypes, phenotypeNames.size(), pheno_to_accession_map, 4, results);
+		process_phenotype_scores(matrix_buf, accession_names, phenotypes, phenotypeNames.size(), pheno_to_accession_map, 4, results);
 		stop = high_resolution_clock::now();
 		duration = duration_cast<seconds>(stop - start);
 		cerr << "Time to process that block " << duration.count() << "s " << results.size() << endl;
 
-		printResult(results, pheno_to_accession_map);
+		printResult(results, pheno_to_accession_map, accession_names.size());
 
 		counter++;
 
@@ -506,7 +516,7 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 }
 
 // this function creates and opens the file streams, initiates the work and then closes them.
-int process(vector<CharString> &matrixFilenames, vector<CharString> &kmer_dbs,
+int process(vector<CharString> &matrixFilenames, vector<CharString> &accession_names,
 	    map<CharString, vector<double>> &phenotypes, vector<CharString> &phenotypeNames,
 	    vector<int> &pheno_to_accession_map)
 {
@@ -515,7 +525,7 @@ int process(vector<CharString> &matrixFilenames, vector<CharString> &kmer_dbs,
 	fileStreams.resize(matrixFilenames.size());
 	openAllFiles(fileStreams, matrixFilenames.size(), matrixFilenames);
 
-	work(fileStreams, matrixFilenames, phenotypes, kmer_dbs, phenotypeNames, pheno_to_accession_map);
+	work(fileStreams, matrixFilenames, phenotypes, accession_names, phenotypeNames, pheno_to_accession_map);
 
 	cerr << "Finished" << endl;
 
