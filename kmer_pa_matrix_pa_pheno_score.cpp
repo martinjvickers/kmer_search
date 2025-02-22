@@ -449,7 +449,10 @@ int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_m
 		{
 			int byte_to_edit = i / 64;
 			int bit_to_edit = i % 64;
+			std::bitset<64> x(r.k_value.bits[byte_to_edit]);
+			cout << x[bit_to_edit];
 		}
+		cout << "\t";
 
 		// print the whole PA bits
 		int size = r.k_value.bits.size();
@@ -459,9 +462,12 @@ int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_m
 			std::bitset<64> x(reverseBits(r.k_value.bits[i]));
 			cout << x;
 		}
+
 		// process the last bitset which could be shorter than 64bit
 		int bits_to_read = num_accessions - ((size - 1) * 64);
-		std::bitset<64> x(reverseBits(r.k_value.bits[size - 1]));
+		//Don't reverse this because addressing individual bits in a bitset
+		//follows Big Endian
+		std::bitset<64> x(r.k_value.bits[size - 1]);
 	
 		for(int i = 0; i < bits_to_read; i++)
 		{
