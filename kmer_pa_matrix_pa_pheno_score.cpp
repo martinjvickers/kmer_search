@@ -135,34 +135,6 @@ int encode(const std::string& kmer, unsigned long long int& x_ull)
 	return 0;
 }
 
-int encode(const Dna5String kmer, unsigned long long int& x_ull)
-{
-	x_ull = 0;
-	for (size_t i = 0; i < length(kmer); ++i)
-	{
-		char nucleotide = kmer[i];
-		switch (nucleotide)
-		{
-			case 'A':
-				// No need to change bits, as both bits are 0 by default in an unsigned long long int
-				break;
-			case 'G':
-				x_ull |= (1ULL << (2*i + 1));
-				break;
-			case 'C':
-				x_ull |= (1ULL << (2*i));
-				break;
-			case 'T':
-				x_ull |= (1ULL << (2*i));
-				x_ull |= (1ULL << (2*i + 1));
-				break;
-			default:
-				return 1; // Return an error code if an invalid character is encountered
-		}
-	}
-	return 0;
-}
-
 int decode(const unsigned long long int& x_ull, std::string& kmer, uint32 kmer_length) 
 {
 	kmer.clear();
@@ -508,9 +480,6 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		auto stop = high_resolution_clock::now();
 		auto duration = duration_cast<seconds>(stop - start);
 		cerr << "Clearing previous buffer " << duration.count() << "s" << endl;
-		// test break while working
-		//if(counter >= 4)
-		//	break;
 
 		// read from your files in num_mb blocks of 1MB
 		start = high_resolution_clock::now();
@@ -571,11 +540,11 @@ vector<int> createPheno2AM(vector<CharString> accession_names, map<CharString, v
 	return pheno_to_accession_map;
 }
 
-// A basic template to get up and running quickly
-// ./kmer_pa_matrix_search -k examples/massive_list.txt -i meh.out -l kmer.txt -s 3
-//
-//
-// ./kmer_pa_matrix_pa_pheno_score -k /mnt/platforms/informatics/mvickers/watkins_PA_matrix/unified_list.txt -s 31 -p /mnt/platforms/informatics/mvickers/watkins_PA_matrix/watkins_wheatblast_phenotypes.txt -i /mnt/platforms/informatics/mvickers/watkins_PA_matrix/matrix_list.txt
+/* A basic template to get up and running quickly
+   		./kmer_pa_matrix_pa_pheno_score -k unified_list.txt \
+ 		        			-s 31 -p watkins_wheatblast_phenotypes.txt \
+ 		        			-i matrix_list.txt
+*/
 int main(int argc, char const ** argv)
 {
 	//parse our options
@@ -589,7 +558,6 @@ int main(int argc, char const ** argv)
 	vector<CharString> accession_names = createFileList(options.kmerDatabasesFilenames);
 
 	// get phenotypes
-	
 	map<CharString, vector<double>> phenotypes;
 	vector<CharString> phenotypeNames;
 	readPhenotypeList(options.phenotypeFilename, phenotypes, ref(phenotypeNames));
