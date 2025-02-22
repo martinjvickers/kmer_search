@@ -455,16 +455,13 @@ int printResult(vector<ThreadResult> &results, vector<int> &pheno_to_accession_m
 		int size = r.k_value.bits.size();
 		for(int i = 0; i < size-1; i++)
 		{
-			//get bitset
-			uint64 rev = reverseBits(r.k_value.bits[i]);
-			//reverse it to little endian for readability
-			std::bitset<64> x(rev);
+			//get bitset reverse it to little endian for readability
+			std::bitset<64> x(reverseBits(r.k_value.bits[i]));
 			cout << x;
 		}
 		// process the last bitset which could be shorter than 64bit
-		int bits_to_read = num_accessions - ((size-1)*64);
-		uint64 rev = reverseBits(r.k_value.bits[size]);
-		std::bitset<64> x(rev);
+		int bits_to_read = num_accessions - ((size - 1) * 64);
+		std::bitset<64> x(reverseBits(r.k_value.bits[size - 1]));
 	
 		for(int i = 0; i < bits_to_read; i++)
 		{
@@ -506,7 +503,9 @@ int work(vector<ifstream> &fileStreams, vector<CharString> &matrixFilenames, map
 		duration = duration_cast<seconds>(stop - start);
 		cerr << "Time to process that block " << duration.count() << "s " << results.size() << endl;
 
+		// print results and clear the results buffer
 		printResult(results, pheno_to_accession_map, accession_names.size());
+		results.clear();
 
 		counter++;
 
